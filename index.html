@@ -215,7 +215,7 @@ textarea{min-height:96px;resize:vertical;line-height:1.5}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v2.0';
+var APP_VER = 'v2.1';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -241,10 +241,14 @@ var TIERS = ['一般卡','商務卡','頂級卡'];
 var TRANS = ['無','悠遊卡','一卡通','iCash'];
 
 /* 名稱關鍵字自動辨識（可手動覆蓋） */
-var NET_KW = [['VISA',/visa|威士/i],['MasterCard',/master\s*card|mastercard|萬事達|世界卡|鈦金/i],
-              ['JCB',/\bjcb\b|極致卡/i],['AmEx',/amex|american\s*express|美國運通|運通/i],
-              ['銀聯',/銀聯|union\s*?pay/i]];
-var TIER_KW= [['頂級卡',/無限卡|infinite|世界卡|world|御璽|signature|極致卡|the\s*class|尊御|黑卡|centurion/i],
+var NET_KW = [
+  ['JCB',        /\bjcb\b|極[致緻]卡|the\s*class/i],
+  ['AmEx',       /amex|american\s*express|美國運通|運通/i],
+  ['銀聯',       /銀聯|union\s*?pay/i],
+  ['MasterCard', /master\s*card|mastercard|萬事達|世界卡|world\s*(elite)?|鈦金/i],
+  ['VISA',       /visa|威士|無限卡|infinite|御璽|signature/i]
+];
+var TIER_KW= [['頂級卡',/無限卡|infinite|世界卡|world|御璽|signature|極[致緻]卡|the\s*class|尊御|尊榮|黑卡|centurion|鼎極|璀璨/i],
               ['商務卡',/商務|企業|采鑽|business|corporate/i]];
 var TRA_KW = [['悠遊卡',/悠遊|easy\s*card/i],['一卡通',/一卡通|i\s*pass|ipass/i],['iCash',/icash|愛金/i]];
 
@@ -265,7 +269,7 @@ var BANK_SITE = {
 var PALETTE = ['#d4a24c','#4fd1a5','#6ea8fe','#f2607a','#b98cf0','#f0b429','#5ec8c8','#e08b5a','#9aa8bd','#7fd06b'];
 
 var S = {
-  cards: [], txns: [], pays: [], del: [],
+  cards: [], txns: [], pays: [], del: [], ovr: {},
   cfg: {api:'', key:'', privacy:false, remindDays:3, warnPct:80, rev:0, groupBank:false, acctLocal:true,
         mig20:0, pay:{code:'', acct:'', pid:''}}
 };
@@ -320,15 +324,29 @@ function detectCard(name){
 }
 /* 共用額度池：同一家銀行且都勾了共用，額度只算一次（取最大值） */
 function poolOf(c){
-  if(!c || c.off || !c.shr || !c.code)
+  if(!c || c.off || !c.code)
     return {limit:Number(c?c.limit:0)||0, used:c?usedOf(c):0, n:1, shared:false};
   var cs=activeCards(), L=0, U=0, n=0, i;
   for(i=0;i<cs.length;i++){
     var x=cs[i];
-    if(!x.shr || (x.code||'')!==(c.code||'')) continue;
+    if((x.code||'')!==(c.code||'')) continue;
     L=Math.max(L, Number(x.limit)||0); U+=usedOf(x); n++;
   }
   return {limit:L, used:U, n:n, shared:n>1};
+}
+/* 到期年月：內部存 YYYY-MM，畫面與輸入一律用信用卡上的 MM/YY */
+function expIn(v){
+  if(!v) return '';
+  var a=String(v).split('-');
+  if(a.length<2) return '';
+  return a[1]+'/'+String(a[0]).slice(2);
+}
+function expParse(str){
+  var d=String(str||'').replace(/[^0-9]/g,'');
+  if(d.length<4) return '';
+  var mm=d.slice(0,2), yy=d.slice(2,4), m=+mm;
+  if(m<1||m>12) return '';
+  return '20'+yy+'-'+mm;
 }
 function expSoon(c){
   if(!c.exp) return false;
@@ -364,7 +382,7 @@ function byBank(){
     var g=map[kk], mx=0, ind=0, hasS=false;
     for(i=0;i<g.cards.length;i++){
       var x=g.cards[i];
-      if(x.shr && x.code){ hasS=true; mx=Math.max(mx, Number(x.limit)||0); }
+      if(x.code){ hasS=true; mx=Math.max(mx, Number(x.limit)||0); }
       else ind += Number(x.limit)||0;
     }
     g.limit = mx + ind; g.shared = hasS;
@@ -400,21 +418,23 @@ function load(){
       if(o.txns)  S.txns=o.txns;
       if(o.pays)  S.pays=o.pays;
       if(o.del)   S.del=o.del;
+      if(o.ovr)   S.ovr=o.ovr;
       if(o.cfg){ for(var k in o.cfg){ if(o.cfg.hasOwnProperty(k)) S.cfg[k]=o.cfg[k]; } }
     }
   }catch(e){ console.log('load fail', e); }
   if(!S.cfg.pay) S.cfg.pay={code:'',acct:'',pid:''};
   var mg=migrate20();
-  if(mg) setTimeout(function(){ toast(mg+' 張卡已設為同行共用額度，可到卡片編輯裡調整'); }, 900);
+  if(mg) setTimeout(function(){ toast('已補上 '+mg+' 張卡的新欄位'); }, 900);
 }
-/* v2.0 遷移：同銀行多卡預設視為共用額度；補上新欄位預設值。只跑一次。 */
+/* 遷移：補上新版才有的欄位預設值。額度合併規則已改為自動，不需要旗標。 */
 function migrate20(){
   if(S.cfg.mig20) return 0;
   var cnt={}, i, c, n=0;
   for(i=0;i<S.cards.length;i++){ c=S.cards[i]; if(c.code) cnt[c.code]=(cnt[c.code]||0)+1; }
   for(i=0;i<S.cards.length;i++){
     c=S.cards[i];
-    if(c.shr===undefined){ c.shr = !!(c.code && cnt[c.code]>1); if(c.shr) n++; }
+    if(!c.shr && c.code){ c.shr = true; n++; }
+    if(c.traOn===undefined) c.traOn=false;
     if(c.net===undefined || c.tier===undefined || c.tra===undefined){
       var d=detectCard(c.name);
       if(c.net===undefined)  c.net=d.net;
@@ -467,8 +487,14 @@ function sumRange(cid, from, to){
   }
   return s;
 }
-/* 本期已結帳待繳（上上次結帳 → 上次結帳） */
-function stmtAmount(c){ return sumRange(c.id, prevClose(c), lastClose(c)); }
+/* 本期已結帳待繳（上上次結帳 → 上次結帳）。有帳單實際金額時以帳單為準。 */
+function ovrKey(c){ return c.id+'|'+cycKey(c); }
+function stmtAmount(c){
+  if(S.ovr && S.ovr[ovrKey(c)] !== undefined) return Number(S.ovr[ovrKey(c)])||0;
+  return sumRange(c.id, prevClose(c), lastClose(c));
+}
+function stmtEst(c){ return sumRange(c.id, prevClose(c), lastClose(c)); }
+function hasOvr(c){ return !!(S.ovr && S.ovr[ovrKey(c)] !== undefined); }
 /* 未出帳（上次結帳 → 今天） */
 function unbilled(c){ return sumRange(c.id, lastClose(c), today()); }
 
@@ -509,10 +535,10 @@ function pools(){
   var cs=activeCards(), out=[], seen={}, i;
   for(i=0;i<cs.length;i++){
     var c=cs[i];
-    if(c.shr && c.code){
+    if(c.code){
       var k='s:'+c.code; if(seen[k]) continue; seen[k]=1;
       var P=poolOf(c);
-      out.push({limit:P.limit, used:P.used, name:(bankName(c.code)||c.code)+' 共用', color:c.color});
+      out.push({limit:P.limit, used:P.used, name:(bankName(c.code)||c.code), color:c.color});
     }else{
       out.push({limit:Number(c.limit)||0, used:usedOf(c), name:c.name, color:c.color});
     }
@@ -584,7 +610,7 @@ function vOverview(){
       var b=bk[i], bp = b.limit>0 ? b.used/b.limit*100 : 0;
       h += '<tr><td>'+esc(b.label)+'</td>'
         +  '<td class="num" style="text-align:right;color:var(--dim)">'+b.n+'</td>'
-        +  '<td class="num" style="text-align:right">'+wan(b.limit)+(b.shared?'<span style="color:var(--dim2);font-size:9px"> 共用</span>':'')+'</td>'
+        +  '<td class="num" style="text-align:right">'+wan(b.limit)+'</td>'
         +  '<td class="num" style="text-align:right;color:'+pctColor(bp)+'">'+wan(b.limit-b.used)+'</td></tr>';
     }
     h += '</table></div>';
@@ -719,7 +745,7 @@ function vCards(){
     var g=map[keys[i]], gp = g.limit>0 ? g.used/g.limit*100 : 0;
     h += '<div class="eyebrow" style="margin-top:'+(i?'20px':'2px')+'">'+esc(g.label)+'</div>'
       +  '<div class="card" style="padding:10px 13px;margin-bottom:9px">'
-      +  '<div class="legend"><span>'+g.list.length+' 張 · 額度 <b class="num">'+wan(g.limit)+'</b>'+(g.shared?' <span style="color:var(--dim2)">共用</span>':'')+'</span>'
+      +  '<div class="legend"><span>'+g.list.length+' 張 · 額度 <b class="num">'+wan(g.limit)+'</b></span>'
       +  '<span style="color:'+pctColor(gp)+'">可用 '+wan(g.limit-g.used)+'</span></div></div>';
     g.list.sort(function(a,b){ return (a.off?1:0)-(b.off?1:0) || (Number(b.limit)||0)-(Number(a.limit)||0); });
     for(j=0;j<g.list.length;j++) h += cardRow(g.list[j], j);
@@ -754,15 +780,14 @@ function cardRow(c, i){
     + '<div class="tags">'
     + (c.net?'<span class="tg net">'+esc(c.net)+'</span>':'')
     + (c.tier&&c.tier!=='一般卡'?'<span class="tg hi">'+esc(c.tier)+'</span>':'')
-    + (c.tra&&c.tra!=='無'?'<span class="tg">'+esc(c.tra)+'</span>':'')
+    + (c.tra&&c.tra!=='無'?'<span class="tg'+(c.traOn?' ok':'')+'">'+esc(c.tra)+(c.traOn?' 已啟用':' 未啟用')+'</span>':'')
     + (c.auto?'<span class="tg ok">自動扣款</span>':'')
-    + (P.shared?'<span class="tg">共用 '+P.n+' 張</span>':'')
-    + (c.exp?'<span class="tg'+(expSoon(c)?' warn':'')+'">'+esc(c.exp.replace('-','/'))+' 到期</span>':'')
+    + (c.exp?'<span class="tg'+(expSoon(c)?' warn':'')+'">'+esc(expIn(c.exp))+' 到期</span>':'')
     + '</div>'
     + '<div class="gauge"><i style="width:'+Math.max(0,Math.min(100,p)).toFixed(1)+'%;background:'+pctColor(p)+'"></i></div>'
-    + '<div class="ln"><span>'+(P.shared?'全行已用 ':'已用 ')+'<b class="num" style="color:var(--txt)">'+wan(u)+'</b> / '+wan(lim)+'</span>'
+    + '<div class="ln"><span>已用 <b class="num" style="color:var(--txt)">'+wan(u)+'</b> / '+wan(lim)+'</span>'
     + '<span>'+p.toFixed(0)+'%</span></div>'
-    + (P.shared?'<div class="ln" style="margin-top:3px;color:var(--dim2)"><span>本卡已用 '+money(mine)+'</span></div>':'')
+    + (P.shared?'<div class="ln" style="margin-top:3px;color:var(--dim2)"><span>本卡已用 '+money(mine)+'</span><span>同行 '+P.n+' 張</span></div>':'')
     + '<div class="track">'+trk
     + '<div class="ln" style="margin-top:8px"><span>本期未出帳 <b class="num" style="color:var(--txt)">'+money(ub)+'</b></span>'
     + '<span>待繳 <b class="num" style="color:'+(paid?'var(--mint)':'var(--txt)')+'">'+money(st)+'</b></span></div>'
@@ -873,7 +898,9 @@ function billCard(it, compact){
     h += '<div class="brow" style="margin-top:11px">';
     if(!it.paid) h += '<button class="btn sm" onclick="payNow(\''+c.id+'\','+it.amt+')">標記已繳</button>';
     else h += '<button class="btn sm ghost" onclick="unpay(\''+c.id+'\')">取消已繳</button>';
-    h += '<button class="btn sm ghost" onclick="ebill(\''+c.id+'\','+it.amt+')">去繳費 ↗</button></div>';
+    h += '<button class="btn sm ghost" onclick="ebill(\''+c.id+'\','+it.amt+')">去繳費 ↗</button></div>'
+      +  '<button class="btn ghost sm" onclick="ovrSheet(\''+c.id+'\')">'
+      +  (hasOvr(c) ? '帳單金額：'+fmt(it.amt)+'（點此修改）' : '輸入帳單上的實際應繳金額')+'</button>';
   }else{
     h += '<div class="brow" style="margin-top:10px"><button class="btn sm ghost" onclick="ebill(\''+c.id+'\','+it.amt+')">去繳費 ↗</button>'
       +  (it.paid?'':'<button class="btn sm" onclick="payNow(\''+c.id+'\','+it.amt+')">標記已繳</button>')+'</div>';
@@ -1048,6 +1075,11 @@ function vSettings(){
     + '<label>身分證字號</label><input id="y_pid" placeholder="繳費驗證用" value="'+esc(PY.pid)+'">'
     + '<button class="btn sm ghost" onclick="savePay2()">儲存付款帳戶</button></div>';
 
+  h += '<div class="eyebrow">卡片維護</div><div class="card">'
+    + '<div class="mut2" style="line-height:1.75;margin-bottom:4px">依卡片名稱重新判斷卡別、等級與行動票證。'
+    + '用「同行再開一張」複製出來的卡會沿用原卡屬性，跑一次這個就會校正。<b>只補空白與明顯錯誤，不會清掉你手動改過的。</b></div>'
+    + '<button class="btn sm ghost" onclick="redetectAll()">全部卡片重新辨識</button></div>';
+
   h += '<div class="eyebrow">資料</div><div class="card">'
     + '<div class="brow"><button class="btn sm ghost" onclick="exportJSON()">匯出備份</button>'
     + '<button class="btn sm ghost" onclick="importSheet()">匯入備份</button></div>'
@@ -1100,15 +1132,14 @@ function editCard(id, clone){
         : '結帳日與繳款截止日填對，帳單週期就會自己算。')+'</div>'
     + '<input type="hidden" id="c_id" value="'+esc(c.id)+'">'
     + '<label>卡片名稱</label><input id="c_name" placeholder="例：玉山 U Bear 世界卡" value="'+esc(c.name)+'" oninput="autoDetect()">'
-    + '<div class="mut2" id="c_det" style="margin-top:5px">打完名稱會自動判斷卡別、等級與行動票證，判斷錯了在下面改就好。</div>'
+    + '<div style="display:flex;align-items:center;gap:8px;margin-top:5px">'
+    + '<div class="mut2" id="c_det" style="flex:1">打完名稱會自動判斷卡別、等級與行動票證，判斷錯了在下面改就好。</div>'
+    + '<button class="cpb" onclick="autoDetect(1)">重新辨識</button></div>'
     + '<div class="g2"><div><label>發卡機構</label><select id="c_code" onchange="onBankPick()">'+bopt+'</select></div>'
     + '<div><label>末四碼</label><input id="c_last4" inputmode="numeric" maxlength="4" placeholder="1234" value="'+esc(c.last4)+'"></div></div>'
     + '<label>信用額度（單位：萬）</label><input id="c_limit" type="text" inputmode="decimal" placeholder="80" value="'+esc(toWanIn(c.limit))+'" oninput="hintWan()">'
     + '<div class="mut2" id="c_limit_h" style="margin-top:5px">80 萬填 <b>80</b>，15.5 萬填 <b>15.5</b>。</div>'
-    + '<label style="display:flex;align-items:center;gap:9px;margin-top:13px"><input type="checkbox" id="c_shr" style="width:19px;height:19px" '+(c.shr?'checked':'')+'>'
-    + '<span style="font-size:13px">這家銀行的卡<b>共用額度</b>（總額度只算一次）</span></label>'
-    + '<div class="mut2" style="margin-top:5px">台灣多數銀行是同行共用一個綜合額度。這個設定會<b>套用到同一家銀行的所有卡</b>，'
-    + '額度取其中最大值，總額度不會重複相加。</div>'
+    + '<div class="mut2" style="margin-top:5px">同一家銀行的卡自動視為共用額度，總額度取最大值、不會重複相加。</div>'
     + '<div class="g3"><div><label>結帳日</label><input id="c_close" type="text" inputmode="numeric" maxlength="2" value="'+esc(c.close)+'"></div>'
     + '<div><label>繳款截止日</label><input id="c_due" type="text" inputmode="numeric" maxlength="2" value="'+esc(c.due)+'"></div>'
     + '<div><label>截止日落在</label><select id="c_dnext"><option value="0"'+(c.dueNext?'':' selected')+'>當月</option><option value="1"'+(c.dueNext?' selected':'')+'>次月</option></select></div></div>'
@@ -1123,7 +1154,8 @@ function editCard(id, clone){
     + '<div class="g3"><div><label>卡別</label><select id="c_net">'+selOpt(['']. concat(NETS), c.net)+'</select></div>'
     + '<div><label>等級</label><select id="c_tier">'+selOpt(TIERS, c.tier||'一般卡')+'</select></div>'
     + '<div><label>行動票證</label><select id="c_tra">'+selOpt(TRANS, c.tra||'無')+'</select></div></div>'
-    + '<label>卡片到期年月</label><input id="c_exp" type="month" value="'+esc(c.exp)+'">'
+    + '<div class="g2"><div><label>到期 MM/YY</label><input id="c_exp" type="text" inputmode="numeric" maxlength="5" placeholder="08/29" value="'+esc(expIn(c.exp))+'"></div>'
+    + '<div><label>行動票證已啟用</label><select id="c_traon">'+selOpt(['未啟用','已啟用'], c.traOn?'已啟用':'未啟用')+'</select></div></div>'
     + '<label>卡片官網（留空用內建銀行官網）</label><input id="c_site" inputmode="url" placeholder="https://" value="'+esc(c.site)+'">'
 
     + '<div class="eyebrow">與這家銀行的關係</div>'
@@ -1164,7 +1196,7 @@ function hintWan(){
   e.innerHTML = v ? ('＝ NT$ <b style="color:var(--brass)">'+fmt(Math.round(v*10000))+'</b>')
                   : '80 萬填 <b>80</b>，15.5 萬填 <b>15.5</b>。';
 }
-function autoDetect(){
+function autoDetect(force){
   var n=$('c_name'), e=$('c_det'); if(!n||!e) return;
   var d=detectCard(n.value), hit=[];
   if(d.net){ if($('c_net')) $('c_net').value=d.net; hit.push(d.net); }
@@ -1217,26 +1249,30 @@ function saveCard(){
   c.net   = $('c_net') ? $('c_net').value : (c.net||'');
   c.tier  = $('c_tier') ? $('c_tier').value : (c.tier||'一般卡');
   c.tra   = $('c_tra') ? $('c_tra').value : (c.tra||'無');
-  c.exp   = $('c_exp') ? $('c_exp').value : (c.exp||'');
   c.site  = $('c_site') ? $('c_site').value.trim() : (c.site||'');
   c.auto  = $('c_auto') ? $('c_auto').checked : false;
   c.nb    = $('c_nb') ? $('c_nb').checked : false;
   c.dep   = $('c_dep') ? $('c_dep').checked : false;
   c.sec   = $('c_sec') ? $('c_sec').checked : false;
-  c.shr   = ($('c_shr') ? $('c_shr').checked : false) && !!c.code;
-  /* 共用額度是「銀行層級」的性質：同步整家銀行，避免同行卡設定不一致而重複計算 */
+  c.traOn = $('c_traon') ? ($('c_traon').value === '已啟用') : !!c.traOn;
+  c.exp   = $('c_exp') ? expParse($('c_exp').value) : (c.exp||'');
+  c.shr   = !!c.code;                 /* 同行一律共用額度，不再逐張設定 */
+  /* 與銀行的關係（網銀 / 存款戶 / 證券戶）屬於銀行層級，同行自動同步 */
   var syncN = 0;
   if(c.code){
     for(var q=0;q<S.cards.length;q++){
       var x=S.cards[q];
-      if(x===c || x.code!==c.code || x.off) continue;
-      if(x.shr !== c.shr){ x.shr = c.shr; syncN++; }
+      if(x===c || x.code!==c.code) continue;
+      x.shr = true;
+      if(x.nb!==c.nb || x.dep!==c.dep || x.sec!==c.sec){
+        x.nb=c.nb; x.dep=c.dep; x.sec=c.sec; syncN++;
+      }
     }
   }
   if(!c.log) c.log=[];
   save(); closeSheet(); render();
   toast(c.limit<=0 ? '已儲存，但額度是 0，不會計入總額度'
-      : (syncN ? ('已儲存 · '+(bankName(c.code)||'同行')+' 共 '+(syncN+1)+' 張'+(c.shr?'共用':'獨立')+'額度 '+wan(c.limit))
+      : (syncN ? ('已儲存 · 網銀/存款戶/證券戶已同步到 '+(bankName(c.code)||'同行')+' 其他 '+syncN+' 張')
                : ('已儲存 · '+c.name+' 額度 '+wan(c.limit))));
 }
 function delCard(id){
@@ -1294,10 +1330,10 @@ function openCard(id){
   var h = '<h3>'+esc(c.name)+' <span class="num" style="font-size:13px;color:var(--dim);font-weight:500">•'+esc(c.last4||'····')+'</span></h3>'
     + '<div class="mut2">'+(c.code?esc(c.code+' '+bankName(c.code)):'未設定機構')+(c.note?' · '+esc(c.note):'')+'</div>'
     + '<div class="card" style="margin-top:14px">'
-    + '<div class="legend"><span>'+(P.shared?'全行已用 ':'已用 ')+'<b class="num">'+money(u)+'</b></span><span style="color:'+pctColor(p)+'">'+p.toFixed(1)+'%</span><span>額度 <b class="num">'+wan(lim)+'</b></span></div>'
+    + '<div class="legend"><span>已用 <b class="num">'+money(u)+'</b></span><span style="color:'+pctColor(p)+'">'+p.toFixed(1)+'%</span><span>額度 <b class="num">'+wan(lim)+'</b></span></div>'
     + '<div class="gauge" style="margin:10px 0 0"><i style="width:'+Math.max(0,Math.min(100,p)).toFixed(1)+'%;background:'+pctColor(p)+'"></i></div></div>'
     + '<div class="stat3" style="margin-top:10px">'
-    + '<div><div class="k">'+(P.shared?'全行可用':'可用')+'</div><div class="v num" style="color:var(--mint)">'+money(lim-u)+'</div></div>'
+    + '<div><div class="k">可用</div><div class="v num" style="color:var(--mint)">'+money(lim-u)+'</div></div>'
     + '<div><div class="k">待繳</div><div class="v num">'+money(stmtAmount(c))+'</div></div>'
     + '<div><div class="k">未出帳</div><div class="v num" style="color:var(--dim)">'+money(unbilled(c))+'</div></div></div>'
     + '<div class="card" style="margin-top:10px"><table class="tbl">'
@@ -1306,10 +1342,10 @@ function openCard(id){
     + '<tr><td>下次結帳</td><td class="num" style="text-align:right">'+ds(nc)+'</td></tr>'
     + (c.acct?'<tr><td>銷帳編號</td><td class="num" style="text-align:right">'+esc(c.acct)+'</td></tr>':'')
     + (c.adjNext?'<tr><td>可申請調額</td><td class="num" style="text-align:right">'+esc(c.adjNext)+'</td></tr>':'')
-    + (P.shared?'<tr><td>本卡已用</td><td class="num" style="text-align:right">'+money(mine)+'</td></tr>':'')
+    + (P.shared?'<tr><td>本卡已用</td><td class="num" style="text-align:right">'+money(mine)+'（同行 '+P.n+' 張）</td></tr>':'')
     + '<tr><td>卡別 / 等級</td><td style="text-align:right">'+esc((c.net||'—')+' · '+(c.tier||'一般卡'))+'</td></tr>'
-    + (c.tra&&c.tra!=='無'?'<tr><td>行動票證</td><td style="text-align:right">'+esc(c.tra)+'</td></tr>':'')
-    + (c.exp?'<tr><td>卡片到期</td><td class="num" style="text-align:right;color:'+(expSoon(c)?'var(--rose)':'var(--txt)')+'">'+esc(c.exp.replace('-','/'))+'</td></tr>':'')
+    + (c.tra&&c.tra!=='無'?'<tr><td>行動票證</td><td style="text-align:right">'+esc(c.tra)+' · <span style="color:'+(c.traOn?'var(--mint)':'var(--dim2)')+'">'+(c.traOn?'已啟用':'未啟用')+'</span></td></tr>':'')
+    + (c.exp?'<tr><td>卡片到期</td><td class="num" style="text-align:right;color:'+(expSoon(c)?'var(--rose)':'var(--txt)')+'">'+esc(expIn(c.exp))+'</td></tr>':'')
     + '<tr><td>自動扣款</td><td style="text-align:right;color:'+(c.auto?'var(--mint)':'var(--dim2)')+'">'+(c.auto?'已開啟':'未開啟')+'</td></tr>'
     + '<tr><td>網銀 / 存款戶 / 證券戶</td><td style="text-align:right">'
     + (c.nb?'✓':'—')+' / '+(c.dep?'✓':'—')+' / '+(c.sec?'✓':'—')+'</td></tr>'
@@ -1420,6 +1456,29 @@ function doParse(){
 }
 
 /* ---- 繳款 ---- */
+function ovrSheet(cid){
+  var c=byId(S.cards,cid); if(!c) return;
+  openSheet('<h3>帳單實際應繳</h3>'
+    + '<div class="mut2">系統推估是 <b>'+fmt(stmtEst(c))+'</b>（用結帳日區間加總）。'
+    + '銀行帳單有分期、循環利息、年費、外幣匯差時會有落差，把帳單上的數字填進來最準。</div>'
+    + '<input type="hidden" id="o_cid" value="'+cid+'">'
+    + '<label>本期應繳（元）</label><input id="o_a" class="amtin num" type="text" inputmode="decimal" value="'+(hasOvr(c)?stmtAmount(c):stmtEst(c))+'">'
+    + '<div class="mut2" style="margin-top:8px">週期：'+ds(prevClose(c))+' → '+ds(lastClose(c))+'，截止 '+ds(dueOf(c,lastClose(c)))+'</div>'
+    + '<button class="btn" onclick="saveOvr()">存為本期應繳</button>'
+    + (hasOvr(c)?'<button class="btn ghost sm" onclick="clearOvr()">改回系統推估</button>':'')
+    + '<button class="btn ghost sm" onclick="closeSheet()">取消</button>');
+}
+function saveOvr(){
+  var c=byId(S.cards,$('o_cid').value); if(!c) return;
+  if(!S.ovr) S.ovr={};
+  S.ovr[ovrKey(c)] = numVal('o_a', 0);
+  save(); closeSheet(); render(); toast('已記錄帳單金額');
+}
+function clearOvr(){
+  var c=byId(S.cards,$('o_cid').value); if(!c) return;
+  if(S.ovr) delete S.ovr[ovrKey(c)];
+  save(); closeSheet(); render(); toast('已改回系統推估');
+}
 function payNow(cid, amt){
   var c=byId(S.cards,cid); if(!c) return;
   openSheet('<h3>標記已繳</h3><div class="mut2">'+esc(c.name)+' · 截止 '+ds(dueOf(c,lastClose(c)))+'</div>'
@@ -1611,6 +1670,18 @@ function wipe(){
   S.cards=[]; S.txns=[]; S.pays=[];
   save(); go('ov'); toast('已清空');
 }
+function redetectAll(){
+  var n=0, i, hits=[];
+  for(i=0;i<S.cards.length;i++){
+    var c=S.cards[i], d=detectCard(c.name), ch=[];
+    if(d.net && c.net!==d.net){ c.net=d.net; ch.push(d.net); }
+    if(d.tier!=='一般卡' && c.tier!==d.tier){ c.tier=d.tier; ch.push(d.tier); }
+    if(d.tra!=='無' && c.tra!==d.tra){ c.tra=d.tra; ch.push(d.tra); }
+    if(ch.length){ n++; if(hits.length<3) hits.push(c.name+'→'+ch.join('/')); }
+  }
+  save(); render();
+  toast(n ? (n+' 張已更新：'+hits.join('、')+(n>3?' …':'')) : '沒有需要更新的卡片');
+}
 function savePay2(){
   S.cfg.pay = {code:$('y_code').value.replace(/\D/g,'').slice(0,3),
                acct:$('y_acct').value.replace(/[^0-9\-]/g,''),
@@ -1637,7 +1708,7 @@ function pushCloud(){
     method:'POST', redirect:'follow',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
     body: JSON.stringify({action:'push', key:S.cfg.key, del:S.del||[],
-      data:{cards:outCards, txns:S.txns, pays:S.pays,
+      data:{cards:outCards, txns:S.txns, pays:S.pays, ovr:S.ovr||{},
             cfg:{remindDays:S.cfg.remindDays, warnPct:S.cfg.warnPct}}})   /* pay 與 api key 永不上傳 */
   }).then(function(r){ return r.json(); })
     .then(function(j){
@@ -1657,6 +1728,7 @@ function pullCloud(){
       var keep={}, i;
       for(i=0;i<S.cards.length;i++){ if(S.cards[i].acct) keep[S.cards[i].id]=S.cards[i].acct; }
       S.cards=j.data.cards||[]; S.txns=j.data.txns||[]; S.pays=j.data.pays||[]; S.del=[];
+      if(j.data.ovr) S.ovr=j.data.ovr;
       for(i=0;i<S.cards.length;i++){ if(!S.cards[i].acct && keep[S.cards[i].id]) S.cards[i].acct=keep[S.cards[i].id]; }
       /* 雲端可能還是舊版格式，下載後一定要重跑一次遷移，否則共用額度會失效 */
       S.cfg.mig20=0; migrate20();
