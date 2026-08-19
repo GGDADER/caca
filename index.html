@@ -215,7 +215,7 @@ textarea{min-height:96px;resize:vertical;line-height:1.5}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v2.1';
+var APP_VER = 'v2.2';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -266,6 +266,20 @@ var BANK_SITE = {
  '822':'https://www.ctbcbank.com','823':'https://www.nextbank.com.tw','824':'https://www.linebank.com.tw',
  '826':'https://www.rakuten-bank.com.tw'};
 
+/* 卡名關鍵字 → 機構代碼，用於修復被試算表吃掉或漏填的代碼 */
+var BANK_ALIAS = [
+  ['824',/line\s*bank|連線商銀/i], ['826',/樂天/i], ['823',/將來/i],
+  ['822',/中信|中國信託|ctbc|line\s*pay/i], ['812',/台新|臺新|richart/i], ['810',/星展|dbs/i],
+  ['809',/凱基/i], ['808',/玉山|esun|u\s*bear/i], ['807',/永豐|sinopac|幣倍|大戶/i],
+  ['806',/元大/i], ['805',/遠東|遠銀|feib|bankee/i], ['803',/聯邦|ubot/i],
+  ['816',/安泰/i], ['700',/郵局|中華郵政/i], ['147',/三信/i], ['118',/板信/i],
+  ['108',/陽信/i], ['103',/新光/i], ['081',/[匯滙]豐|hsbc/i], ['054',/京城/i],
+  ['053',/台中銀|臺中銀/i], ['052',/渣打|standard/i], ['050',/[台臺]灣企銀|台企|臺企/i],
+  ['048',/王道|o-?bank/i], ['017',/兆豐/i], ['016',/高雄銀/i], ['013',/國泰|cube|cathay/i],
+  ['012',/富邦|fubon/i], ['011',/上海商銀/i], ['009',/彰銀|彰化銀/i], ['008',/華南|華銀/i],
+  ['007',/第一銀|一銀|firstbank/i], ['006',/合庫|合作金庫/i], ['005',/土地銀|土銀/i],
+  ['004',/[台臺]灣銀行|台銀|臺銀/i]
+];
 var PALETTE = ['#d4a24c','#4fd1a5','#6ea8fe','#f2607a','#b98cf0','#f0b429','#5ec8c8','#e08b5a','#9aa8bd','#7fd06b'];
 
 var S = {
@@ -329,7 +343,7 @@ function poolOf(c){
   var cs=activeCards(), L=0, U=0, n=0, i;
   for(i=0;i<cs.length;i++){
     var x=cs[i];
-    if((x.code||'')!==(c.code||'')) continue;
+    if(normCode(x.code)!==normCode(c.code)) continue;
     L=Math.max(L, Number(x.limit)||0); U+=usedOf(x); n++;
   }
   return {limit:L, used:U, n:n, shared:n>1};
@@ -354,6 +368,10 @@ function expSoon(c){
   var e=new Date(+a[0], +a[1], 0), t=today();
   return (e-t)/86400000 < 120;
 }
+function cardSearch(c){
+  return 'https://www.google.com/search?btnI=1&q='
+    + encodeURIComponent((bankName(c.code)||'') + ' ' + (c.name||'') + ' 信用卡 官網');
+}
 function siteOf(c){
   if(c.site) return c.site;
   if(c.code && BANK_SITE[c.code]) return BANK_SITE[c.code];
@@ -371,7 +389,7 @@ function byBank(){
   for(i=0;i<cs.length;i++){
     var c=cs[i], k=c.code || ('?'+(c.name||'未分類').slice(0,3));
     if(!map[k]){
-      map[k]={key:k, code:c.code||'', label:(c.code? c.code+' '+bankName(c.code) : '未設定機構'),
+      map[k]={key:k, code:normCode(c.code), label:bankLabel(c.code),
               n:0, limit:0, used:0, cards:[]};
     }
     map[k].n++; map[k].used += usedOf(c); map[k].cards.push(c);
@@ -401,7 +419,33 @@ function dayDiff(a,b){ return Math.round((b-a)/86400000); }
 function md(dt){ return (dt.getMonth()+1)+'/'+dt.getDate(); }
 function byId(arr,id){ for(var i=0;i<arr.length;i++){ if(arr[i].id===id) return arr[i]; } return null; }
 function catOf(k){ for(var i=0;i<CATS.length;i++){ if(CATS[i].k===k) return CATS[i]; } return CATS[CATS.length-1]; }
-function bankName(code){ for(var i=0;i<BANKS.length;i++){ if(BANKS[i][0]===code) return BANKS[i][1]; } return ''; }
+/* 試算表會把 013 存成數字 13、0406 存成 406。回填前導零才對得回來。 */
+function padz(v, len){
+  var d=String(v==null?'':v).replace(/\D/g,'');
+  if(!d) return '';
+  while(d.length<len) d='0'+d;
+  return d.length>len ? d.slice(-len) : d;
+}
+function normCode(v){
+  var d=padz(v,3);
+  return d.length===3 ? d : '';
+}
+function guessBank(name){
+  var s=String(name||''), i;
+  for(i=0;i<BANK_ALIAS.length;i++) if(BANK_ALIAS[i][1].test(s)) return BANK_ALIAS[i][0];
+  return '';
+}
+function bankName(code){
+  var c=normCode(code);
+  for(var i=0;i<BANKS.length;i++){ if(BANKS[i][0]===c) return BANKS[i][1]; }
+  return '';
+}
+function bankLabel(code){
+  var c=normCode(code);
+  if(!c) return '未設定機構';
+  var n=bankName(c);
+  return n ? (c+' '+n) : c;
+}
 
 function toast(msg){
   var t=$('toast'); t.textContent=msg; t.className='on';
@@ -428,12 +472,11 @@ function load(){
 }
 /* 遷移：補上新版才有的欄位預設值。額度合併規則已改為自動，不需要旗標。 */
 function migrate20(){
-  if(S.cfg.mig20) return 0;
   var cnt={}, i, c, n=0;
   for(i=0;i<S.cards.length;i++){ c=S.cards[i]; if(c.code) cnt[c.code]=(cnt[c.code]||0)+1; }
   for(i=0;i<S.cards.length;i++){
     c=S.cards[i];
-    if(!c.shr && c.code){ c.shr = true; n++; }
+    if(!c.shr && c.code){ c.shr = true; if(!S.cfg.mig20) n++; }
     if(c.traOn===undefined) c.traOn=false;
     if(c.net===undefined || c.tier===undefined || c.tra===undefined){
       var d=detectCard(c.name);
@@ -441,6 +484,8 @@ function migrate20(){
       if(c.tier===undefined) c.tier=d.tier;
       if(c.tra===undefined)  c.tra=d.tra;
     }
+    c.code  = normCode(c.code);
+    c.last4 = padz(c.last4, 4);
     if(c.exp===undefined)  c.exp='';
     if(c.auto===undefined) c.auto=false;
     if(c.nb===undefined)   c.nb=false;
@@ -736,10 +781,16 @@ function vCards(){
   var map={}, keys=[];
   for(i=0;i<cs.length;i++){
     var c=cs[i], k=c.code || ('?'+(c.name||'未分類').slice(0,3));
-    if(!map[k]){ map[k]={label:(c.code? c.code+' '+bankName(c.code) : '未設定機構'), list:[], limit:0, used:0}; keys.push(k); }
+    if(!map[k]){ map[k]={label:bankLabel(c.code), list:[], limit:0, max:0, ind:0, used:0}; keys.push(k); }
     map[k].list.push(c);
-    if(!c.off){ map[k].limit += Number(c.limit)||0; map[k].used += usedOf(c); }
+    if(!c.off){
+      /* 與總覽同一套規則：同行取最大值，未設機構的卡各自獨立 */
+      if(normCode(c.code)) map[k].max = Math.max(map[k].max, Number(c.limit)||0);
+      else map[k].ind += Number(c.limit)||0;
+      map[k].used += usedOf(c);
+    }
   }
+  for(i=0;i<keys.length;i++){ map[keys[i]].limit = map[keys[i]].max + map[keys[i]].ind; }
   keys.sort(function(a,b){ return map[b].limit - map[a].limit; });
   for(i=0;i<keys.length;i++){
     var g=map[keys[i]], gp = g.limit>0 ? g.used/g.limit*100 : 0;
@@ -1078,7 +1129,10 @@ function vSettings(){
   h += '<div class="eyebrow">卡片維護</div><div class="card">'
     + '<div class="mut2" style="line-height:1.75;margin-bottom:4px">依卡片名稱重新判斷卡別、等級與行動票證。'
     + '用「同行再開一張」複製出來的卡會沿用原卡屬性，跑一次這個就會校正。<b>只補空白與明顯錯誤，不會清掉你手動改過的。</b></div>'
-    + '<button class="btn sm ghost" onclick="redetectAll()">全部卡片重新辨識</button></div>';
+    + '<button class="btn sm ghost" onclick="redetectAll()">全部卡片重新辨識</button>'
+    + '<div class="mut2" style="line-height:1.75;margin:14px 0 4px">機構代碼若因雲端同步被吃掉前導零（013 變 13），'
+    + '或有卡片顯示「未設定機構」，按這裡依卡片名稱自動補回。</div>'
+    + '<button class="btn sm ghost" onclick="fixCodes()">修復機構代碼</button></div>';
 
   h += '<div class="eyebrow">資料</div><div class="card">'
     + '<div class="brow"><button class="btn sm ghost" onclick="exportJSON()">匯出備份</button>'
@@ -1118,7 +1172,7 @@ function editCard(id, clone){
   var defCol = c.color || nextColor();
   var i, bopt='<option value="">— 選擇 —</option>';
   for(i=0;i<BANKS.length;i++){
-    bopt += '<option value="'+BANKS[i][0]+'"'+(BANKS[i][0]===c.code?' selected':'')+'>'+BANKS[i][0]+' '+BANKS[i][1]+'</option>';
+    bopt += '<option value="'+BANKS[i][0]+'"'+(BANKS[i][0]===normCode(c.code)?' selected':'')+'>'+BANKS[i][0]+' '+BANKS[i][1]+'</option>';
   }
   var copt='';
   for(i=0;i<PALETTE.length;i++){
@@ -1233,8 +1287,8 @@ function saveCard(){
   var c = id ? byId(S.cards,id) : null;
   if(!c){ c={id:uid(), log:[]}; S.cards.push(c); }
   c.name  = name;
-  c.code  = $('c_code').value;
-  c.last4 = $('c_last4').value.replace(/\D/g,'').slice(0,4);
+  c.code  = normCode($('c_code').value);
+  c.last4 = padz($('c_last4').value, 4);
   c.limit = Math.round(numVal('c_limit', 0) * 10000);
   c.close = Math.min(31, Math.max(1, numVal('c_close', 5)||5));
   c.due   = Math.min(31, Math.max(1, numVal('c_due', 23)||23));
@@ -1262,17 +1316,18 @@ function saveCard(){
   if(c.code){
     for(var q=0;q<S.cards.length;q++){
       var x=S.cards[q];
-      if(x===c || x.code!==c.code) continue;
+      if(x===c || normCode(x.code)!==normCode(c.code)) continue;
       x.shr = true;
-      if(x.nb!==c.nb || x.dep!==c.dep || x.sec!==c.sec){
-        x.nb=c.nb; x.dep=c.dep; x.sec=c.sec; syncN++;
+      /* 額度共用 → 自動扣款也是整行一起扣，連同網銀/存款戶/證券戶一併同步 */
+      if(x.nb!==c.nb || x.dep!==c.dep || x.sec!==c.sec || x.auto!==c.auto){
+        x.nb=c.nb; x.dep=c.dep; x.sec=c.sec; x.auto=c.auto; syncN++;
       }
     }
   }
   if(!c.log) c.log=[];
   save(); closeSheet(); render();
   toast(c.limit<=0 ? '已儲存，但額度是 0，不會計入總額度'
-      : (syncN ? ('已儲存 · 網銀/存款戶/證券戶已同步到 '+(bankName(c.code)||'同行')+' 其他 '+syncN+' 張')
+      : (syncN ? ('已儲存 · 關係設定已同步到 '+(bankName(c.code)||'同行')+' 其他 '+syncN+' 張')
                : ('已儲存 · '+c.name+' 額度 '+wan(c.limit))));
 }
 function delCard(id){
@@ -1328,7 +1383,7 @@ function openCard(id){
   var P=poolOf(c), lim=P.limit, u=P.used, p=lim>0?u/lim*100:0, mine=usedOf(c);
   var lc=lastClose(c), nc=nextClose(c), du=dueOf(c,lc);
   var h = '<h3>'+esc(c.name)+' <span class="num" style="font-size:13px;color:var(--dim);font-weight:500">•'+esc(c.last4||'····')+'</span></h3>'
-    + '<div class="mut2">'+(c.code?esc(c.code+' '+bankName(c.code)):'未設定機構')+(c.note?' · '+esc(c.note):'')+'</div>'
+    + '<div class="mut2">'+esc(bankLabel(c.code))+(c.note?' · '+esc(c.note):'')+'</div>'
     + '<div class="card" style="margin-top:14px">'
     + '<div class="legend"><span>已用 <b class="num">'+money(u)+'</b></span><span style="color:'+pctColor(p)+'">'+p.toFixed(1)+'%</span><span>額度 <b class="num">'+wan(lim)+'</b></span></div>'
     + '<div class="gauge" style="margin:10px 0 0"><i style="width:'+Math.max(0,Math.min(100,p)).toFixed(1)+'%;background:'+pctColor(p)+'"></i></div></div>'
@@ -1350,7 +1405,9 @@ function openCard(id){
     + '<tr><td>網銀 / 存款戶 / 證券戶</td><td style="text-align:right">'
     + (c.nb?'✓':'—')+' / '+(c.dep?'✓':'—')+' / '+(c.sec?'✓':'—')+'</td></tr>'
     + '</table></div>'
-    + '<a class="btn ghost sm" style="display:block;text-align:center;text-decoration:none" href="'+esc(siteOf(c))+'" target="_blank" rel="noopener">前往 '+esc(bankName(c.code)||'銀行')+'官網 ↗</a>'
+    + '<div class="brow" style="margin-top:8px">'
+    + '<a class="btn ghost sm" style="text-align:center;text-decoration:none" href="'+esc(siteOf(c))+'" target="_blank" rel="noopener">'+esc(bankName(c.code)||'銀行')+'官網 ↗</a>'
+    + '<a class="btn ghost sm" style="text-align:center;text-decoration:none" href="'+esc(cardSearch(c))+'" target="_blank" rel="noopener">找這張卡的頁面 ↗</a></div>'
     + '<div class="brow" style="margin-top:12px"><button class="btn sm" onclick="editCard(\''+id+'\')">編輯</button>'
     + '<button class="btn sm ghost" onclick="ebill(\''+id+'\','+stmtAmount(c)+')">去繳費 ↗</button></div>'
     + '<button class="btn ghost sm" onclick="editCard(\''+id+'\',1)">＋ 同一家銀行，再開一張</button>';
@@ -1670,6 +1727,27 @@ function wipe(){
   S.cards=[]; S.txns=[]; S.pays=[];
   save(); go('ov'); toast('已清空');
 }
+function fixCodes(){
+  var fixed=0, guessed=0, still=[], i;
+  for(i=0;i<S.cards.length;i++){
+    var c=S.cards[i], before=String(c.code==null?'':c.code);
+    var nc=normCode(c.code);
+    if(!nc || !bankName(nc)){
+      var g=guessBank(c.name);
+      if(g){ c.code=g; guessed++; }
+      else { c.code=nc; if(!nc) still.push(c.name); }
+    }else{
+      c.code=nc;
+    }
+    c.last4 = padz(c.last4, 4);
+    if(String(c.code)!==before) fixed++;
+    if(c.code) c.shr=true;
+  }
+  save(); render();
+  var msg = fixed ? (fixed+' 張已修復'+(guessed?'（'+guessed+' 張依卡名判斷）':'')) : '沒有需要修復的代碼';
+  if(still.length) msg += '，'+still.length+' 張仍需手動選機構';
+  toast(msg);
+}
 function redetectAll(){
   var n=0, i, hits=[];
   for(i=0;i<S.cards.length;i++){
@@ -1730,8 +1808,8 @@ function pullCloud(){
       S.cards=j.data.cards||[]; S.txns=j.data.txns||[]; S.pays=j.data.pays||[]; S.del=[];
       if(j.data.ovr) S.ovr=j.data.ovr;
       for(i=0;i<S.cards.length;i++){ if(!S.cards[i].acct && keep[S.cards[i].id]) S.cards[i].acct=keep[S.cards[i].id]; }
-      /* 雲端可能還是舊版格式，下載後一定要重跑一次遷移，否則共用額度會失效 */
-      S.cfg.mig20=0; migrate20();
+      /* 雲端可能是舊格式、且試算表會吃掉前導零，下載後一定要重跑正規化 */
+      migrate20();
       save(); go('ov'); toast('已下載 '+S.cards.length+' 張卡 / '+S.txns.length+' 筆');
     })
     .catch(function(e){ toast('下載失敗：'+e.message); });
