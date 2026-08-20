@@ -215,7 +215,7 @@ textarea{min-height:96px;resize:vertical;line-height:1.5}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v2.2';
+var APP_VER = 'v2.3';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -596,6 +596,66 @@ function pctColor(p){
   return 'var(--mint)';
 }
 
+/* ============ 繳費群組 ============ */
+/**
+ * 同一家銀行是一張合併帳單：一個應繳金額、一個截止日、繳一次。
+ * 群組鍵包含結帳/繳款日，萬一同行真的有兩種週期才會拆開。
+ * 沒有機構代碼的卡各自獨立成一組。
+ */
+function billGroups(){
+  var cs=activeCards(), map={}, order=[], i, j;
+  for(i=0;i<cs.length;i++){
+    var c=cs[i], code=normCode(c.code);
+    var k = code ? ('B'+code+'|'+c.close+'|'+c.due+'|'+(c.dueNext?1:0)) : ('C'+c.id);
+    if(!map[k]){
+      map[k]={key:k, code:code, label: code ? bankLabel(code) : (c.name||'未命名'),
+              cards:[], primary:c};
+      order.push(k);
+    }
+    map[k].cards.push(c);
+  }
+  var out=[], t=today();
+  for(i=0;i<order.length;i++){
+    var g=map[order[i]], p=g.primary;
+    g.lc  = lastClose(p);
+    g.nc  = nextClose(p);
+    g.dueDate = dueOf(p, g.lc);
+    g.cyc = ds(g.lc);
+    g.dd  = dayDiff(t, g.dueDate);
+    g.est = 0; g.unbilled = 0;
+    for(j=0;j<g.cards.length;j++){
+      g.est      += stmtAmount(g.cards[j]);
+      g.unbilled += unbilled(g.cards[j]);
+    }
+    g.amt  = hasOvrG(g) ? Number(S.ovr[ovrKeyG(g)])||0 : g.est;
+    g.paid = paidOfG(g);
+    g.auto = true;
+    for(j=0;j<g.cards.length;j++) if(!g.cards[j].auto) g.auto=false;
+    /* 銷帳編號取該行第一張有填的卡 */
+    g.acct = ''; g.acctCard = p;
+    for(j=0;j<g.cards.length;j++){ if(g.cards[j].acct){ g.acct=g.cards[j].acct; g.acctCard=g.cards[j]; break; } }
+    out.push(g);
+  }
+  out.sort(function(a,b){ if(a.paid&&!b.paid) return 1; if(!a.paid&&b.paid) return -1; return a.dd-b.dd; });
+  return out;
+}
+function gByKey(k){
+  var gs=billGroups(), i;
+  for(i=0;i<gs.length;i++) if(gs[i].key===k) return gs[i];
+  return null;
+}
+function ovrKeyG(g){ return g.key+'@'+g.cyc; }
+function hasOvrG(g){ return !!(S.ovr && S.ovr[ovrKeyG(g)] !== undefined); }
+function paidOfG(g){
+  var i,j;
+  for(i=0;i<S.pays.length;i++){
+    var p=S.pays[i];
+    if(String(p.cyc)!==g.cyc) continue;
+    for(j=0;j<g.cards.length;j++) if(g.cards[j].id===p.cid) return p;
+  }
+  return null;
+}
+
 /* ============ 導覽 ============ */
 function go(tab){
   TAB = tab;
@@ -663,7 +723,7 @@ function vOverview(){
 
   /* 即將到期 */
   var up = upcoming(45);
-  h += '<div class="eyebrow">即將到期</div>';
+  h += '<div class="eyebrow">即將到期 · 依銀行合併</div>';
   if(!up.length){
     h += '<div class="card mut">未來 45 天沒有到期的帳單。</div>';
   }else{
@@ -724,16 +784,14 @@ function monthByCat(){
   return arr;
 }
 function upcoming(days){
-  var cs=activeCards(), out=[], t=today();
-  for(var i=0;i<cs.length;i++){
-    var c=cs[i], amt=stmtAmount(c), due=dueOf(c, lastClose(c)), dd=dayDiff(t, due), paid=isPaid(c);
-    if(dd > days) continue;
-    if(paid && dd < 0) continue;
-    if(!amt && !paid && dd < 0) continue;
-    if(!amt && !paid && dd >= 0 && amt===0) { /* 無消費也顯示，但排後面 */ }
-    out.push({c:c, amt:amt, due:due, dd:dd, paid:paid});
+  var gs=billGroups(), out=[], i;
+  for(i=0;i<gs.length;i++){
+    var g=gs[i];
+    if(g.dd > days) continue;
+    if(g.paid && g.dd < 0) continue;
+    if(!g.amt && !g.paid && g.dd < 0) continue;
+    out.push(g);
   }
-  out.sort(function(p,q){ if(p.paid&&!q.paid) return 1; if(!p.paid&&q.paid) return -1; return p.dd-q.dd; });
   return out;
 }
 function adjSoon(){
@@ -841,7 +899,7 @@ function cardRow(c, i){
     + (P.shared?'<div class="ln" style="margin-top:3px;color:var(--dim2)"><span>本卡已用 '+money(mine)+'</span><span>同行 '+P.n+' 張</span></div>':'')
     + '<div class="track">'+trk
     + '<div class="ln" style="margin-top:8px"><span>本期未出帳 <b class="num" style="color:var(--txt)">'+money(ub)+'</b></span>'
-    + '<span>待繳 <b class="num" style="color:'+(paid?'var(--mint)':'var(--txt)')+'">'+money(st)+'</b></span></div>'
+    + '<span>本卡本期 <b class="num" style="color:'+(paid?'var(--mint)':'var(--txt)')+'">'+money(st)+'</b></span></div>'
     + '</div></div>';
 }
 
@@ -894,23 +952,19 @@ function txRow(t){
 /* ============ 視圖：帳單 ============ */
 function vBills(){
   if(!S.cards.length) return emptyState();
-  var cs=activeCards(), i, h='';
-  var list=[];
-  for(i=0;i<cs.length;i++){
-    var c=cs[i];
-    list.push({c:c, amt:stmtAmount(c), due:dueOf(c,lastClose(c)), dd:dayDiff(today(), dueOf(c,lastClose(c))), paid:isPaid(c)});
+  var i, h='', list=billGroups();
+  var unpaid=0, autoN=0;
+  for(i=0;i<list.length;i++){
+    if(!list[i].paid){ unpaid += list[i].amt; if(list[i].auto) autoN++; }
   }
-  list.sort(function(p,q){ if(p.paid&&!q.paid) return 1; if(!p.paid&&q.paid) return -1; return p.dd-q.dd; });
-
-  var unpaid=0;
-  for(i=0;i<list.length;i++){ if(!list[i].paid) unpaid += list[i].amt; }
 
   h += '<div class="hero"><div class="lab">本期待繳合計</div>'
     +  '<div class="big" style="color:var(--brass)"><small>NT$</small>'+money(unpaid)+'</div>'
-    +  '<div class="legend" style="margin-top:10px"><span>'+list.length+' 張卡</span>'
+    +  '<div class="legend" style="margin-top:10px"><span>'+list.length+' 家銀行'
+    +  (autoN?' · '+autoN+' 家自動扣款':'')+'</span>'
     +  '<span><a href="https://ebill.ba.org.tw/" target="_blank" rel="noopener">開啟 e-Bill 全國繳費網 ↗</a></span></div></div>';
 
-  h += '<div class="eyebrow">各卡帳單</div>';
+  h += '<div class="eyebrow">各行帳單</div>';
   for(i=0;i<list.length;i++) h += billCard(list[i], false);
 
   var ps = S.pays.slice(0).sort(function(a,b){ return a.d<b.d?1:-1; });
@@ -927,34 +981,45 @@ function vBills(){
   }
   return h;
 }
-function billCard(it, compact){
-  var c=it.c, cls='bill', pill='', txt='';
-  if(it.paid){ cls+=' paid'; pill='<span class="pill c">已繳</span>'; }
-  else if(it.dd<0){ cls+=' due'; pill='<span class="pill a">逾期 '+(-it.dd)+' 天</span>'; }
-  else if(it.dd<=Number(S.cfg.remindDays||3)){ cls+=' due'; pill='<span class="pill a">'+(it.dd===0?'今天到期':'剩 '+it.dd+' 天')+'</span>'; }
-  else{ pill='<span class="pill b">剩 '+it.dd+' 天</span>'; }
+function billCard(g, compact){
+  var cls='bill', pill='', i;
+  if(g.paid){ cls+=' paid'; pill='<span class="pill c">已繳</span>'; }
+  else if(g.auto){ pill='<span class="pill c">自動扣款</span>'; }
+  else if(g.dd<0){ cls+=' due'; pill='<span class="pill a">逾期 '+(-g.dd)+' 天</span>'; }
+  else if(g.dd<=Number(S.cfg.remindDays||3)){ cls+=' due'; pill='<span class="pill a">'+(g.dd===0?'今天到期':'剩 '+g.dd+' 天')+'</span>'; }
+  else{ pill='<span class="pill b">剩 '+g.dd+' 天</span>'; }
 
   var h = '<div class="'+cls+'">'
     + '<div style="display:flex;align-items:center;gap:8px">'
-    + '<span style="font-size:13.5px;font-weight:700">'+esc(c.name)+'</span>'
-    + '<span class="l4 num" style="font-size:11.5px;color:var(--dim)">•'+esc(c.last4||'····')+'</span>'
+    + '<span style="font-size:13.5px;font-weight:700">'+esc(g.label)+'</span>'
+    + (g.cards.length>1?'<span class="mut2">'+g.cards.length+' 張合併</span>':'')
     + '<span style="flex:1"></span>'+pill+'</div>'
     + '<div style="display:flex;align-items:flex-end;gap:10px;margin-top:8px">'
-    + '<div><div class="mut2">應繳</div><div class="num" style="font-size:21px;font-weight:800">'+money(it.paid?it.paid.a:it.amt)+'</div></div>'
+    + '<div><div class="mut2">應繳'+(hasOvrG(g)?'（帳單）':'（推估）')+'</div>'
+    + '<div class="num" style="font-size:21px;font-weight:800">'+money(g.paid?g.paid.a:g.amt)+'</div></div>'
     + '<div style="flex:1"></div>'
     + '<div style="text-align:right"><div class="mut2">截止日</div>'
-    + '<div class="num" style="font-size:14px;font-weight:600">'+ds(it.due).slice(5)+'</div></div></div>';
+    + '<div class="num" style="font-size:14px;font-weight:600">'+ds(g.dueDate).slice(5)+'</div></div></div>';
 
   if(!compact){
+    if(g.cards.length>1){
+      h += '<div style="margin-top:9px;padding-top:9px;border-top:1px dashed var(--line)">';
+      for(i=0;i<g.cards.length;i++){
+        var cc=g.cards[i];
+        h += '<div class="ln" style="margin-bottom:3px"><span>'+esc(cc.name)+' <span class="num" style="color:var(--dim2)">•'+esc(cc.last4||'····')+'</span></span>'
+          +  '<span class="num">'+money(stmtAmount(cc))+'</span></div>';
+      }
+      h += '</div>';
+    }
     h += '<div class="brow" style="margin-top:11px">';
-    if(!it.paid) h += '<button class="btn sm" onclick="payNow(\''+c.id+'\','+it.amt+')">標記已繳</button>';
-    else h += '<button class="btn sm ghost" onclick="unpay(\''+c.id+'\')">取消已繳</button>';
-    h += '<button class="btn sm ghost" onclick="ebill(\''+c.id+'\','+it.amt+')">去繳費 ↗</button></div>'
-      +  '<button class="btn ghost sm" onclick="ovrSheet(\''+c.id+'\')">'
-      +  (hasOvr(c) ? '帳單金額：'+fmt(it.amt)+'（點此修改）' : '輸入帳單上的實際應繳金額')+'</button>';
+    if(!g.paid) h += '<button class="btn sm" onclick="payNowG(\''+g.key+'\','+g.amt+')">標記已繳</button>';
+    else h += '<button class="btn sm ghost" onclick="unpayG(\''+g.key+'\')">取消已繳</button>';
+    h += '<button class="btn sm ghost" onclick="ebillG(\''+g.key+'\','+g.amt+')">去繳費 ↗</button></div>'
+      +  '<button class="btn ghost sm" onclick="ovrSheetG(\''+g.key+'\')">'
+      +  (hasOvrG(g) ? '帳單金額：'+fmt(g.amt)+'（點此修改）' : '輸入帳單上的實際應繳金額')+'</button>';
   }else{
-    h += '<div class="brow" style="margin-top:10px"><button class="btn sm ghost" onclick="ebill(\''+c.id+'\','+it.amt+')">去繳費 ↗</button>'
-      +  (it.paid?'':'<button class="btn sm" onclick="payNow(\''+c.id+'\','+it.amt+')">標記已繳</button>')+'</div>';
+    h += '<div class="brow" style="margin-top:10px"><button class="btn sm ghost" onclick="ebillG(\''+g.key+'\','+g.amt+')">去繳費 ↗</button>'
+      +  (g.paid?'':'<button class="btn sm" onclick="payNowG(\''+g.key+'\','+g.amt+')">標記已繳</button>')+'</div>';
   }
   return h+'</div>';
 }
@@ -1389,7 +1454,7 @@ function openCard(id){
     + '<div class="gauge" style="margin:10px 0 0"><i style="width:'+Math.max(0,Math.min(100,p)).toFixed(1)+'%;background:'+pctColor(p)+'"></i></div></div>'
     + '<div class="stat3" style="margin-top:10px">'
     + '<div><div class="k">可用</div><div class="v num" style="color:var(--mint)">'+money(lim-u)+'</div></div>'
-    + '<div><div class="k">待繳</div><div class="v num">'+money(stmtAmount(c))+'</div></div>'
+    + '<div><div class="k">本卡本期</div><div class="v num">'+money(stmtAmount(c))+'</div></div>'
     + '<div><div class="k">未出帳</div><div class="v num" style="color:var(--dim)">'+money(unbilled(c))+'</div></div></div>'
     + '<div class="card" style="margin-top:10px"><table class="tbl">'
     + '<tr><td>上次結帳</td><td class="num" style="text-align:right">'+ds(lc)+'</td></tr>'
@@ -1409,7 +1474,7 @@ function openCard(id){
     + '<a class="btn ghost sm" style="text-align:center;text-decoration:none" href="'+esc(siteOf(c))+'" target="_blank" rel="noopener">'+esc(bankName(c.code)||'銀行')+'官網 ↗</a>'
     + '<a class="btn ghost sm" style="text-align:center;text-decoration:none" href="'+esc(cardSearch(c))+'" target="_blank" rel="noopener">找這張卡的頁面 ↗</a></div>'
     + '<div class="brow" style="margin-top:12px"><button class="btn sm" onclick="editCard(\''+id+'\')">編輯</button>'
-    + '<button class="btn sm ghost" onclick="ebill(\''+id+'\','+stmtAmount(c)+')">去繳費 ↗</button></div>'
+    + '<button class="btn sm ghost" onclick="ebillCard(\''+id+'\')">去繳費 ↗</button></div>'
     + '<button class="btn ghost sm" onclick="editCard(\''+id+'\',1)">＋ 同一家銀行，再開一張</button>';
 
   var mine=[], i;
@@ -1536,6 +1601,93 @@ function clearOvr(){
   if(S.ovr) delete S.ovr[ovrKey(c)];
   save(); closeSheet(); render(); toast('已改回系統推估');
 }
+function payNowG(gkey, amt){
+  var g=gByKey(gkey); if(!g) return;
+  openSheet('<h3>標記已繳</h3><div class="mut2">'+esc(g.label)
+    + (g.cards.length>1?' · '+g.cards.length+' 張合併帳單':'')+' · 截止 '+ds(g.dueDate)+'</div>'
+    + '<input type="hidden" id="p_g" value="'+esc(gkey)+'">'
+    + '<label>繳款金額</label><input id="p_a" class="amtin num" type="text" inputmode="decimal" value="'+(Math.round(amt)||0)+'">'
+    + '<div class="g2"><div><label>繳款日期</label><input id="p_d" type="date" value="'+ds(today())+'"></div>'
+    + '<div><label>備註</label><input id="p_n" placeholder="選填"></div></div>'
+    + '<div class="mut2" style="margin-top:8px">金額會從這家銀行的已用額度扣掉。只繳最低應繳的話，填實際金額就好。</div>'
+    + '<button class="btn" onclick="savePayG()">確認</button>');
+}
+function savePayG(){
+  var g=gByKey($('p_g').value); if(!g) return;
+  var a=numVal('p_a', 0);
+  S.pays.push({id:uid(), cid:g.primary.id, d:$('p_d').value||ds(today()), a:a,
+               n:$('p_n').value.trim(), cyc:g.cyc});
+  save(); closeSheet(); render(); toast('已記錄 '+g.label+' 繳款 NT$'+fmt(a));
+}
+function unpayG(gkey){
+  var g=gByKey(gkey); if(!g) return;
+  var n=[], i, j, hit;
+  for(i=0;i<S.pays.length;i++){
+    var p=S.pays[i]; hit=false;
+    if(String(p.cyc)===g.cyc){ for(j=0;j<g.cards.length;j++) if(g.cards[j].id===p.cid) hit=true; }
+    if(hit) tomb(p.id); else n.push(p);
+  }
+  S.pays=n; save(); render(); toast('已取消');
+}
+function ovrSheetG(gkey){
+  var g=gByKey(gkey); if(!g) return;
+  openSheet('<h3>帳單實際應繳</h3>'
+    + '<div class="mut2">'+esc(g.label)+' 系統推估 <b>'+fmt(g.est)+'</b>'
+    + (g.cards.length>1?'（'+g.cards.length+' 張合計）':'')+'。'
+    + '帳單有分期、循環利息、年費、外幣匯差時會有落差，填帳單上的數字最準。</div>'
+    + '<input type="hidden" id="o_g" value="'+esc(gkey)+'">'
+    + '<label>本期應繳（元）</label><input id="o_a" class="amtin num" type="text" inputmode="decimal" value="'+Math.round(g.amt)+'">'
+    + '<div class="mut2" style="margin-top:8px">週期：'+ds(prevClose(g.primary))+' → '+ds(g.lc)+'，截止 '+ds(g.dueDate)+'</div>'
+    + '<button class="btn" onclick="saveOvrG()">存為本期應繳</button>'
+    + (hasOvrG(g)?'<button class="btn ghost sm" onclick="clearOvrG()">改回系統推估</button>':'')
+    + '<button class="btn ghost sm" onclick="closeSheet()">取消</button>');
+}
+function saveOvrG(){
+  var g=gByKey($('o_g').value); if(!g) return;
+  if(!S.ovr) S.ovr={};
+  S.ovr[ovrKeyG(g)] = numVal('o_a', 0);
+  save(); closeSheet(); render(); toast('已記錄帳單金額');
+}
+function clearOvrG(){
+  var g=gByKey($('o_g').value); if(!g) return;
+  if(S.ovr) delete S.ovr[ovrKeyG(g)];
+  save(); closeSheet(); render(); toast('已改回系統推估');
+}
+function ebillG(gkey, amt){
+  var g=gByKey(gkey); if(!g) return;
+  var P=S.cfg.pay||{code:'',acct:'',pid:''};
+  var extra='';
+  if(g.cards.length>1){
+    extra = '<div class="mut2" style="margin-top:8px">這家銀行 '+g.cards.length+' 張卡是同一張合併帳單，繳一次就好。'
+      + '銷帳編號用的是「'+esc(g.acctCard.name)+'」的號碼。</div>';
+  }
+  if(g.acct && navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(g.acct).then(function(){}, function(){});
+  }
+  openSheet('<h3>去繳費 · '+esc(g.label)+'</h3>'
+    + '<div class="mut2">e-Bill 是另一個網站，無法從這裡自動填表。改成一欄一鍵複製，貼過去最快。</div>'
+    + '<div class="eyebrow">繳款資料</div>'
+    + '<div class="card" style="padding:4px 13px"><table class="tbl">'
+    + rowCp('信用卡機構代號', g.code, '機構代號')
+    + '<tr><td>機構名稱</td><td style="text-align:right" colspan="2">'+esc(bankName(g.code)||'未設定')+'</td></tr>'
+    + rowCp('銷帳編號', g.acct, '銷帳編號')
+    + rowCp('應繳金額', String(Math.round(amt)), '金額')
+    + '</table></div>' + extra
+    + '<div class="eyebrow">付款帳戶</div>'
+    + '<div class="card" style="padding:4px 13px"><table class="tbl">'
+    + rowCp('付款行代碼', P.code, '銀行代碼')
+    + rowCp('付款帳號', P.acct, '帳號')
+    + rowCp('身分證字號', P.pid, '身分證字號')
+    + '</table></div>'
+    + (P.acct?'':'<div class="mut2" style="margin-top:8px">付款帳戶還沒設定，到設定頁填一次就好，只存在這台手機。</div>')
+    + '<a class="btn" style="text-align:center;text-decoration:none;color:#191203" href="https://ebill.ba.org.tw/" target="_blank" rel="noopener">開啟 e-Bill 全國繳費網</a>'
+    + '<button class="btn ghost sm" onclick="closeSheet();payNowG(\''+esc(gkey)+'\','+amt+')">繳完了，標記已繳</button>');
+}
+function groupOfCard(cid){
+  var gs=billGroups(), i, j;
+  for(i=0;i<gs.length;i++) for(j=0;j<gs[i].cards.length;j++) if(gs[i].cards[j].id===cid) return gs[i];
+  return null;
+}
 function payNow(cid, amt){
   var c=byId(S.cards,cid); if(!c) return;
   openSheet('<h3>標記已繳</h3><div class="mut2">'+esc(c.name)+' · 截止 '+ds(dueOf(c,lastClose(c)))+'</div>'
@@ -1575,6 +1727,10 @@ function rowCp(label, val, tag){
     + '<td style="width:44px;text-align:right">'
     + (val?'<button class="cpb" onclick="cp(\''+esc(String(val).replace(/\'/g,''))+'\',\''+esc(tag||label)+'\')">複製</button>':'')
     + '</td></tr>';
+}
+function ebillCard(cid){
+  var g=groupOfCard(cid);
+  if(g) ebillG(g.key, g.amt); else toast('找不到帳單群組');
 }
 function ebill(cid, amt){
   var c=byId(S.cards,cid); if(!c) return;
