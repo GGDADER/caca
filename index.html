@@ -160,8 +160,10 @@ textarea{min-height:96px;resize:vertical;line-height:1.5}
 #bd{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;opacity:0;pointer-events:none;
   transition:opacity .2s}
 #bd.on{opacity:1;pointer-events:auto}
+body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 #sh{position:fixed;left:0;right:0;bottom:0;z-index:51;background:var(--slab);border-radius:20px 20px 0 0;
-  border-top:1px solid var(--line);max-height:92vh;overflow-y:auto;transform:translateY(102%);
+  border-top:1px solid var(--line);max-height:92vh;overflow-y:auto;overscroll-behavior:contain;
+  transform:translateY(102%);
   transition:transform .26s cubic-bezier(.2,.8,.2,1);padding:8px 15px calc(22px + var(--sb));
   -webkit-overflow-scrolling:touch}
 #sh.on{transform:translateY(0)}
@@ -215,7 +217,7 @@ textarea{min-height:96px;resize:vertical;line-height:1.5}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v2.3';
+var APP_VER = 'v2.4';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -808,16 +810,29 @@ function adjSoon(){
 /* ============ 視圖：卡片 ============ */
 function vCards(){
   if(!S.cards.length) return emptyState();
-  var h = '<div style="display:flex;gap:8px;margin-bottom:10px">'
-    + '<input id="q" placeholder="搜尋銀行 / 卡名 / 末四碼" oninput="render()" value="'+esc(vCards._q||'')+'" style="flex:1">'
+  return '<div style="display:flex;gap:8px;margin-bottom:10px">'
+    + '<input id="q" placeholder="搜尋銀行 / 卡名 / 末四碼" oninput="onSearch()" value="'+esc(vCards._q||'')+'" style="flex:1">'
     + '<button class="ico" style="width:44px;height:44px;font-size:19px" onclick="editCard(\'\')">＋</button></div>'
-    + '<div class="chips" style="margin-bottom:12px">'
-    + '<button class="chip'+(S.cfg.groupBank?'':' on')+'" onclick="S.cfg.groupBank=false;save();render()">全部卡片</button>'
-    + '<button class="chip'+(S.cfg.groupBank?' on':'')+'" onclick="S.cfg.groupBank=true;save();render()">依銀行分組</button>'
-    + '</div>';
-  var q = ($('q') ? $('q').value : (vCards._q||'')).toLowerCase();
-  vCards._q = q;
-
+    + '<div class="chips" id="cdchips" style="margin-bottom:12px">'+chipsHTML()+'</div>'
+    + '<div id="cdlist">'+cardListHTML()+'</div>';
+}
+function chipsHTML(){
+  return '<button class="chip'+(S.cfg.groupBank?'':' on')+'" onclick="setGroup(0)">全部卡片</button>'
+    +  '<button class="chip'+(S.cfg.groupBank?' on':'')+'" onclick="setGroup(1)">依銀行分組</button>';
+}
+/* 只重畫列表，不動輸入框 —— 整頁 innerHTML 會讓輸入框失焦、鍵盤收起 */
+function onSearch(){
+  var e=$('q'); if(!e) return;
+  vCards._q = String(e.value||'').toLowerCase();
+  var box=$('cdlist'); if(box) box.innerHTML = cardListHTML();
+}
+function setGroup(v){
+  S.cfg.groupBank = !!v; save();
+  var c=$('cdchips'); if(c) c.innerHTML = chipsHTML();
+  var box=$('cdlist'); if(box) box.innerHTML = cardListHTML();
+}
+function cardListHTML(){
+  var h='', q=String(vCards._q||'').toLowerCase();
   var cs = [], i, j;
   for(i=0;i<S.cards.length;i++){
     var c0=S.cards[i];
@@ -827,7 +842,7 @@ function vCards(){
     }
     cs.push(c0);
   }
-  if(!cs.length) return h + '<div class="empty"><p>沒有符合的卡片。<br>換個關鍵字，或按右上 ＋ 新增一張。</p></div>';
+  if(!cs.length) return '<div class="empty"><p>沒有符合的卡片。<br>換個關鍵字，或按右上 ＋ 新增一張。</p></div>';
 
   if(!S.cfg.groupBank){
     cs.sort(function(a,b){ return (a.off?1:0)-(b.off?1:0) || (Number(b.limit)||0)-(Number(a.limit)||0); });
@@ -940,12 +955,20 @@ function vAdd(){
   }
   return h;
 }
+function srcTag(t){
+  var s=String(t.src||'');
+  if(s.indexOf('gm:')===0) return ' · <span style="color:var(--mint)">Gmail 自動</span>';
+  if(s.indexOf('line')===0) return ' · <span style="color:var(--mint)">LINE 自動</span>';
+  if(s && s!=='api') return ' · <span style="color:var(--mint)">自動</span>';
+  if(s==='api') return ' · <span style="color:var(--mint)">捷徑</span>';
+  return '';
+}
 function txRow(t){
   var c=byId(S.cards,t.cid), co=catOf(t.c);
   return '<div class="tx" onclick="txSheet(\''+t.id+'\')">'
     + '<div class="cat">'+co.g+'</div>'
     + '<div><div class="m">'+esc(t.m||co.n)+'</div>'
-    + '<div class="d">'+esc(t.d)+' · '+esc(c?c.name:'（已刪卡）')+(t.inst>0?' · 分'+t.inst+'期':'')+'</div></div>'
+    + '<div class="d">'+esc(t.d)+' · '+esc(c?c.name:'（已刪卡）')+(t.inst>0?' · 分'+t.inst+'期':'')+srcTag(t)+'</div></div>'
     + '<div class="sp"></div><div class="a num">'+money(t.a)+'</div></div>';
 }
 
@@ -1217,8 +1240,29 @@ function vSettings(){
 }
 
 /* ============ Sheet ============ */
-function openSheet(html){ $('shc').innerHTML=html; $('bd').className='on'; $('sh').className='on'; }
-function closeSheet(){ $('bd').className=''; $('sh').className=''; }
+/* 彈出層開啟時鎖住背景捲動：iOS 上不鎖的話手指會捲到後面的頁面 */
+var _sy = 0;
+function openSheet(html){
+  var wasOpen = $('sh').className === 'on';
+  if(!wasOpen){
+    _sy = window.pageYOffset || document.documentElement.scrollTop || 0;
+    document.body.className = 'lock';
+    document.body.style.top = (-_sy) + 'px';
+  }
+  $('shc').innerHTML = html;
+  $('sh').scrollTop = 0;
+  $('bd').className = 'on';
+  $('sh').className = 'on';
+}
+function closeSheet(){
+  if($('sh').className === 'on'){
+    document.body.className = '';
+    document.body.style.top = '';
+    window.scrollTo(0, _sy);
+  }
+  $('bd').className = '';
+  $('sh').className = '';
+}
 
 /* ---- 卡片編輯 ---- */
 function editCard(id, clone){
@@ -1377,22 +1421,34 @@ function saveCard(){
   c.exp   = $('c_exp') ? expParse($('c_exp').value) : (c.exp||'');
   c.shr   = !!c.code;                 /* 同行一律共用額度，不再逐張設定 */
   /* 與銀行的關係（網銀 / 存款戶 / 證券戶）屬於銀行層級，同行自動同步 */
-  var syncN = 0;
+  var syncN = 0, SW = {};
   if(c.code){
     for(var q=0;q<S.cards.length;q++){
       var x=S.cards[q];
       if(x===c || normCode(x.code)!==normCode(c.code)) continue;
       x.shr = true;
-      /* 額度共用 → 自動扣款也是整行一起扣，連同網銀/存款戶/證券戶一併同步 */
-      if(x.nb!==c.nb || x.dep!==c.dep || x.sec!==c.sec || x.auto!==c.auto){
-        x.nb=c.nb; x.dep=c.dep; x.sec=c.sec; x.auto=c.auto; syncN++;
+      var ch=false;
+      /* 同行＝一張合併帳單：結帳日、繳款截止日、額度、可調額日全行共通 */
+      if(x.close!==c.close || x.due!==c.due || x.dueNext!==c.dueNext){
+        x.close=c.close; x.due=c.due; x.dueNext=c.dueNext; ch=true; SW.cyc=1;
       }
+      if(x.limit!==c.limit){ x.limit=c.limit; ch=true; SW.lim=1; }
+      if(x.adjNext!==c.adjNext){ x.adjNext=c.adjNext; ch=true; SW.adj=1; }
+      if(x.nb!==c.nb || x.dep!==c.dep || x.sec!==c.sec || x.auto!==c.auto){
+        x.nb=c.nb; x.dep=c.dep; x.sec=c.sec; x.auto=c.auto; ch=true; SW.rel=1;
+      }
+      if(ch) syncN++;
     }
   }
   if(!c.log) c.log=[];
   save(); closeSheet(); render();
+  var what=[];
+  if(SW.cyc) what.push('結帳/繳款日');
+  if(SW.lim) what.push('額度');
+  if(SW.adj) what.push('可調額日');
+  if(SW.rel) what.push('帳戶關係');
   toast(c.limit<=0 ? '已儲存，但額度是 0，不會計入總額度'
-      : (syncN ? ('已儲存 · 關係設定已同步到 '+(bankName(c.code)||'同行')+' 其他 '+syncN+' 張')
+      : (syncN ? (what.join('、')+' 已同步到 '+(bankName(c.code)||'同行')+' 其他 '+syncN+' 張')
                : ('已儲存 · '+c.name+' 額度 '+wan(c.limit))));
 }
 function delCard(id){
@@ -1495,7 +1551,7 @@ function txSheet(id){
   var t=byId(S.txns,id); if(!t) return;
   var c=byId(S.cards,t.cid);
   openSheet('<h3>'+esc(t.m||'消費')+'</h3>'
-    + '<div class="mut2">'+esc(t.d)+' · '+esc(c?c.name:'（已刪卡）')+' · '+catOf(t.c).n+(t.inst>0?' · 分'+t.inst+'期':'')+'</div>'
+    + '<div class="mut2">'+esc(t.d)+' · '+esc(c?c.name:'（已刪卡）')+' · '+catOf(t.c).n+(t.inst>0?' · 分'+t.inst+'期':'')+srcTag(t)+'</div>'
     + '<div class="num" style="font-size:38px;font-weight:800;margin:14px 0;color:var(--brass)">'+fmt(t.a)+'</div>'
     + (t.n?'<div class="mut" style="margin-bottom:10px">'+esc(t.n)+'</div>':'')
     + '<button class="btn danger" onclick="delTxn(\''+id+'\')">刪除這筆</button>'
