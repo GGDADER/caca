@@ -217,7 +217,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v2.4';
+var APP_VER = 'v2.5';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -287,7 +287,7 @@ var PALETTE = ['#d4a24c','#4fd1a5','#6ea8fe','#f2607a','#b98cf0','#f0b429','#5ec
 var S = {
   cards: [], txns: [], pays: [], del: [], ovr: {},
   cfg: {api:'', key:'', privacy:false, remindDays:3, warnPct:80, rev:0, groupBank:false, acctLocal:true,
-        mig20:0, pay:{code:'', acct:'', pid:''}}
+        mig20:0, adjMonths:3, pay:{code:'', acct:'', pid:''}}
 };
 var TAB = 'ov';
 var DRAFT = {cid:'', cat:'食', d:''};
@@ -363,6 +363,29 @@ function expParse(str){
   var mm=d.slice(0,2), yy=d.slice(2,4), m=+mm;
   if(m<1||m>12) return '';
   return '20'+yy+'-'+mm;
+}
+/* 調額：記「申請日」，下次可申請日自動往後推（預設 3 個月） */
+function addMonths(d, n){
+  var t=new Date(d.getFullYear(), d.getMonth()+n, 1);
+  return new Date(t.getFullYear(), t.getMonth(), Math.min(d.getDate(), dim(t.getFullYear(), t.getMonth())));
+}
+function calcAdjNext(adjDate){
+  if(!adjDate) return '';
+  return ds(addMonths(pd(adjDate), Number(S.cfg.adjMonths)||3));
+}
+function adjHintText(c){
+  var m=Number(S.cfg.adjMonths)||3;
+  if(c && c.adjDate){
+    var nx=calcAdjNext(c.adjDate), dd=dayDiff(today(), pd(nx));
+    return '下次可申請：<b style="color:'+(dd<=0?'var(--mint)':'var(--brass)')+'">'+nx+'</b>'
+      + (dd<=0 ? '　現在就可以申請' : '　還有 '+dd+' 天');
+  }
+  if(c && c.adjNext) return '下次可申請：<b style="color:var(--brass)">'+esc(c.adjNext)+'</b>（舊資料，填申請日後會重算）';
+  return '填上這次送出調額申請的日期，系統自動往後推 '+m+' 個月當作下次可申請日。';
+}
+function hintAdj(){
+  var e=$('c_adj_h'), i=$('c_adjd'); if(!e||!i) return;
+  e.innerHTML = adjHintText({adjDate:i.value});
 }
 function expSoon(c){
   if(!c.exp) return false;
@@ -494,6 +517,9 @@ function migrate20(){
     if(c.dep===undefined)  c.dep=false;
     if(c.sec===undefined)  c.sec=false;
     if(c.site===undefined) c.site='';
+    if(c.adjDate===undefined) c.adjDate='';
+    if(c.nbId===undefined)    c.nbId='';
+    if(c.nbHint===undefined)  c.nbHint='';
   }
   S.cfg.mig20=1;
   return n;
@@ -756,7 +782,7 @@ function vOverview(){
       var a=adj[i], dd=dayDiff(today(), pd(a.adjNext));
       h += '<div class="card" style="display:flex;align-items:center;gap:10px">'
         + '<div><div style="font-size:13.5px;font-weight:700">'+esc(a.name)+'</div>'
-        + '<div class="mut2">目前額度 '+wan(a.limit)+'</div></div><div style="flex:1"></div>'
+        + '<div class="mut2">目前額度 '+wan(a.limit)+(a.adjDate?' · 上次申請 '+esc(a.adjDate):'')+'</div></div><div style="flex:1"></div>'
         + '<span class="pill '+(dd<=0?'c':'d')+'">'+(dd<=0?'現在可申請':dd+' 天後')+'</span></div>';
     }
   }
@@ -1190,6 +1216,8 @@ function vSettings(){
   var h = '<div class="eyebrow">提醒</div><div class="card">'
     + '<label>繳款截止前幾天提醒</label><input type="text" inputmode="numeric" value="'+esc(cfg.remindDays)+'" onchange="S.cfg.remindDays=Math.max(0,parseInt(String(this.value).replace(/[^0-9]/g,\'\'),10)||3);save();render()">'
     + '<label>額度使用率警戒（%）</label><input type="text" inputmode="numeric" value="'+esc(cfg.warnPct)+'" onchange="S.cfg.warnPct=Math.max(1,parseInt(String(this.value).replace(/[^0-9]/g,\'\'),10)||80);save();render()">'
+    + '<label>調額間隔（月）</label><input type="text" inputmode="numeric" value="'+esc(cfg.adjMonths||3)+'" onchange="S.cfg.adjMonths=Math.max(1,parseInt(String(this.value).replace(/[^0-9]/g,\'\'),10)||3);recalcAdj();save();render()">'
+    + '<div class="mut2" style="margin-top:5px">一般銀行間隔 3 個月才能再次申請調額。改這個數字會重算所有卡片的下次可申請日。</div>'
     + '<button class="btn" onclick="exportICS()">📅 匯出行事曆提醒（.ics）</button>'
     + '<div class="mut2" style="margin-top:8px;line-height:1.7">把結帳日與繳款截止日寫進 iPhone 行事曆，由系統本身發通知。不需要伺服器，也不用開著電腦。</div></div>';
 
@@ -1268,14 +1296,15 @@ function closeSheet(){
 function editCard(id, clone){
   var c = id ? byId(S.cards,id) : {id:'', name:'', code:'', last4:'', limit:'', close:5, due:23,
       dueNext:false, base:0, baseDate:ds(today()), acct:'', adjNext:'', color:'', note:'', off:false, log:[],
-      net:'', tier:'一般卡', tra:'無', exp:'', auto:false, nb:false, dep:false, sec:false, site:'', shr:false};
+      net:'', tier:'一般卡', tra:'無', exp:'', auto:false, nb:false, dep:false, sec:false, site:'', shr:false,
+      adjDate:'', nbId:'', nbHint:''};
   if(!c) return;
   if(clone){
     c = {id:'', name:(c.name||'')+' 2', code:c.code, last4:'', limit:c.limit,
          close:c.close, due:c.due, dueNext:c.dueNext, base:0, baseDate:ds(today()),
          acct:'', adjNext:'', color:'', note:c.note, off:false, log:[],
          net:c.net, tier:c.tier, tra:'無', exp:'', auto:c.auto, nb:c.nb, dep:c.dep, sec:c.sec,
-         site:c.site, shr:true};
+         site:c.site, shr:true, adjDate:c.adjDate||'', nbId:c.nbId||'', nbHint:c.nbHint||''};
   }
   var isNew = !id || clone;
   var defCol = c.color || nextColor();
@@ -1324,6 +1353,12 @@ function editCard(id, clone){
     + '<div class="eyebrow">與這家銀行的關係</div>'
     + '<label style="display:flex;align-items:center;gap:9px;margin-top:4px"><input type="checkbox" id="c_auto" style="width:19px;height:19px" '+(c.auto?'checked':'')+'><span style="font-size:13px">已設定帳戶<b>自動扣款</b></span></label>'
     + '<label style="display:flex;align-items:center;gap:9px;margin-top:11px"><input type="checkbox" id="c_nb" style="width:19px;height:19px" '+(c.nb?'checked':'')+'><span style="font-size:13px">已申辦網路銀行</span></label>'
+    + '<label>網銀帳號 / 使用者代號</label><input id="c_nbid" placeholder="例：身分證字號、或自訂代號" value="'+esc(c.nbId||'')+'">'
+    + '<label>密碼提示</label><input id="c_nbhint" placeholder="例：舊那組＋2 個數字" value="'+esc(c.nbHint||'')+'">'
+    + '<div class="mut2" style="margin-top:6px;line-height:1.75">'
+    + '<b style="color:var(--mint)">這兩欄只留在這台裝置，不會上傳雲端。</b><br>'
+    + '<b style="color:var(--rose)">請只填提示，不要填真正的密碼。</b>真正的密碼建議存在 iPhone 內建的「密碼」App，'
+    + '有 Face ID 保護。這兩欄會同步到同一家銀行的所有卡。</div>'
     + '<label style="display:flex;align-items:center;gap:9px;margin-top:11px"><input type="checkbox" id="c_dep" style="width:19px;height:19px" '+(c.dep?'checked':'')+'><span style="font-size:13px">有實體存款帳戶</span></label>'
     + '<label style="display:flex;align-items:center;gap:9px;margin-top:11px"><input type="checkbox" id="c_sec" style="width:19px;height:19px" '+(c.sec?'checked':'')+'><span style="font-size:13px">有證券交割戶</span></label>'
 
@@ -1332,7 +1367,8 @@ function editCard(id, clone){
     + '<div class="mut2" style="margin-top:6px">'+(S.cfg.acctLocal
         ? '這欄目前設定為<b style="color:var(--mint)">只留在這台裝置</b>，不會上傳雲端。留空也可以，繳費時再從銀行 App 複製。'
         : '⚠️ 這欄目前<b style="color:var(--rose)">會上傳雲端</b>。若填的是完整卡號，建議到設定頁改成只留本機。')+'</div>'
-    + '<label>下次可申請調額日</label><input id="c_adj" type="date" value="'+esc(c.adjNext)+'">'
+    + '<label>調額申請日</label><input id="c_adjd" type="date" value="'+esc(c.adjDate||'')+'" onchange="hintAdj()">'
+    + '<div class="mut2" id="c_adj_h" style="margin-top:5px">'+adjHintText(c)+'</div>'
     + '<label>顏色</label><div class="chips" id="c_colors">'+copt+'</div>'
     + '<input type="hidden" id="c_color" value="'+esc(defCol)+'">'
     + '<label>備註</label><input id="c_note" placeholder="回饋規則、年費、常用場景…" value="'+esc(c.note)+'">'
@@ -1405,7 +1441,10 @@ function saveCard(){
   c.base  = numVal('c_base', 0);
   c.baseDate = $('c_bdate').value || ds(today());
   c.acct  = $('c_acct').value.trim();
-  c.adjNext = $('c_adj').value;
+  c.adjDate = $('c_adjd') ? $('c_adjd').value : (c.adjDate||'');
+  c.adjNext = c.adjDate ? calcAdjNext(c.adjDate) : (c.adjNext||'');
+  c.nbId   = $('c_nbid') ? $('c_nbid').value.trim() : (c.nbId||'');
+  c.nbHint = $('c_nbhint') ? $('c_nbhint').value.trim() : (c.nbHint||'');
   c.color = $('c_color').value;
   c.note  = $('c_note').value.trim();
   c.off   = $('c_off').checked;
@@ -1433,7 +1472,12 @@ function saveCard(){
         x.close=c.close; x.due=c.due; x.dueNext=c.dueNext; ch=true; SW.cyc=1;
       }
       if(x.limit!==c.limit){ x.limit=c.limit; ch=true; SW.lim=1; }
-      if(x.adjNext!==c.adjNext){ x.adjNext=c.adjNext; ch=true; SW.adj=1; }
+      if(x.adjNext!==c.adjNext || x.adjDate!==c.adjDate){
+        x.adjNext=c.adjNext; x.adjDate=c.adjDate; ch=true; SW.adj=1;
+      }
+      if(x.nbId!==c.nbId || x.nbHint!==c.nbHint){
+        x.nbId=c.nbId; x.nbHint=c.nbHint; ch=true; SW.nb=1;
+      }
       if(x.nb!==c.nb || x.dep!==c.dep || x.sec!==c.sec || x.auto!==c.auto){
         x.nb=c.nb; x.dep=c.dep; x.sec=c.sec; x.auto=c.auto; ch=true; SW.rel=1;
       }
@@ -1445,7 +1489,8 @@ function saveCard(){
   var what=[];
   if(SW.cyc) what.push('結帳/繳款日');
   if(SW.lim) what.push('額度');
-  if(SW.adj) what.push('可調額日');
+  if(SW.adj) what.push('調額日');
+  if(SW.nb)  what.push('網銀資料');
   if(SW.rel) what.push('帳戶關係');
   toast(c.limit<=0 ? '已儲存，但額度是 0，不會計入總額度'
       : (syncN ? (what.join('、')+' 已同步到 '+(bankName(c.code)||'同行')+' 其他 '+syncN+' 張')
@@ -1499,6 +1544,28 @@ function saveLimit(){
 }
 
 /* ---- 卡片詳情 ---- */
+/* 網銀資料預設遮蔽，點一下才顯示；隱私模式下一律遮蔽 */
+var _nbShow = '';
+function nbBox(c){
+  if(!c.nbId && !c.nbHint) return '';
+  var open = (_nbShow === c.id) && !S.cfg.privacy;
+  var h = '<div class="eyebrow">網銀登入</div><div class="card" style="padding:4px 13px">';
+  if(open){
+    h += '<table class="tbl">'
+      +  rowCp('帳號 / 代號', c.nbId, '網銀帳號')
+      +  '<tr><td>密碼提示</td><td style="text-align:right" colspan="2">'+esc(c.nbHint||'—')+'</td></tr>'
+      +  '</table>'
+      +  '<button class="btn ghost sm" onclick="_nbShow=\'\';openCard(\''+c.id+'\')">隱藏</button>';
+  }else{
+    h += '<table class="tbl">'
+      +  '<tr><td>帳號 / 代號</td><td class="num" style="text-align:right">'+(c.nbId?'••••••••':'—')+'</td></tr>'
+      +  '<tr><td>密碼提示</td><td style="text-align:right">'+(c.nbHint?'••••••••':'—')+'</td></tr>'
+      +  '</table>'
+      +  '<button class="btn ghost sm" onclick="_nbShow=\''+c.id+'\';openCard(\''+c.id+'\')">'
+      +  (S.cfg.privacy?'隱私模式開啟中':'顯示')+'</button>';
+  }
+  return h + '<div class="mut2" style="margin:8px 0 4px;line-height:1.7">只存在這台裝置，不會上傳雲端。</div></div>';
+}
 function openCard(id){
   var c=byId(S.cards,id); if(!c) return;
   var P=poolOf(c), lim=P.limit, u=P.used, p=lim>0?u/lim*100:0, mine=usedOf(c);
@@ -1517,7 +1584,10 @@ function openCard(id){
     + '<tr><td>繳款截止</td><td class="num" style="text-align:right;color:var(--rose)">'+ds(du)+'（剩 '+dayDiff(today(),du)+' 天）</td></tr>'
     + '<tr><td>下次結帳</td><td class="num" style="text-align:right">'+ds(nc)+'</td></tr>'
     + (c.acct?'<tr><td>銷帳編號</td><td class="num" style="text-align:right">'+esc(c.acct)+'</td></tr>':'')
-    + (c.adjNext?'<tr><td>可申請調額</td><td class="num" style="text-align:right">'+esc(c.adjNext)+'</td></tr>':'')
+    + (c.adjDate?'<tr><td>調額申請日</td><td class="num" style="text-align:right">'+esc(c.adjDate)+'</td></tr>':'')
+    + (c.adjNext?'<tr><td>下次可申請</td><td class="num" style="text-align:right;color:'
+        +(dayDiff(today(),pd(c.adjNext))<=0?'var(--mint)':'var(--txt)')+'">'+esc(c.adjNext)
+        +(dayDiff(today(),pd(c.adjNext))<=0?'　可申請':'　剩 '+dayDiff(today(),pd(c.adjNext))+' 天')+'</td></tr>':'')
     + (P.shared?'<tr><td>本卡已用</td><td class="num" style="text-align:right">'+money(mine)+'（同行 '+P.n+' 張）</td></tr>':'')
     + '<tr><td>卡別 / 等級</td><td style="text-align:right">'+esc((c.net||'—')+' · '+(c.tier||'一般卡'))+'</td></tr>'
     + (c.tra&&c.tra!=='無'?'<tr><td>行動票證</td><td style="text-align:right">'+esc(c.tra)+' · <span style="color:'+(c.traOn?'var(--mint)':'var(--dim2)')+'">'+(c.traOn?'已啟用':'未啟用')+'</span></td></tr>':'')
@@ -1526,6 +1596,7 @@ function openCard(id){
     + '<tr><td>網銀 / 存款戶 / 證券戶</td><td style="text-align:right">'
     + (c.nb?'✓':'—')+' / '+(c.dep?'✓':'—')+' / '+(c.sec?'✓':'—')+'</td></tr>'
     + '</table></div>'
+    + nbBox(c)
     + '<div class="brow" style="margin-top:8px">'
     + '<a class="btn ghost sm" style="text-align:center;text-decoration:none" href="'+esc(siteOf(c))+'" target="_blank" rel="noopener">'+esc(bankName(c.code)||'銀行')+'官網 ↗</a>'
     + '<a class="btn ghost sm" style="text-align:center;text-decoration:none" href="'+esc(cardSearch(c))+'" target="_blank" rel="noopener">找這張卡的頁面 ↗</a></div>'
@@ -1960,6 +2031,12 @@ function fixCodes(){
   if(still.length) msg += '，'+still.length+' 張仍需手動選機構';
   toast(msg);
 }
+function recalcAdj(){
+  for(var i=0;i<S.cards.length;i++){
+    var c=S.cards[i];
+    if(c.adjDate) c.adjNext = calcAdjNext(c.adjDate);
+  }
+}
 function redetectAll(){
   var n=0, i, hits=[];
   for(i=0;i<S.cards.length;i++){
@@ -1991,6 +2068,8 @@ function pushCloud(){
     var o={}, src=S.cards[i];
     for(k in src){ if(src.hasOwnProperty(k)) o[k]=src[k]; }
     if(S.cfg.acctLocal) o.acct='';
+    /* 網銀帳號與密碼提示一律不上傳，不受銷帳編號那個開關影響 */
+    o.nbId=''; o.nbHint='';
     outCards.push(o);
   }
   toast('上傳中…');
@@ -2015,11 +2094,19 @@ function pullCloud(){
     .then(function(r){ return r.json(); })
     .then(function(j){
       if(!j.ok){ toast('失敗：'+(j.err||'?')); return; }
-      var keep={}, i;
-      for(i=0;i<S.cards.length;i++){ if(S.cards[i].acct) keep[S.cards[i].id]=S.cards[i].acct; }
+      var keep={}, keepNB={}, i;
+      for(i=0;i<S.cards.length;i++){
+        if(S.cards[i].acct) keep[S.cards[i].id]=S.cards[i].acct;
+        if(S.cards[i].nbId || S.cards[i].nbHint)
+          keepNB[S.cards[i].id]={id:S.cards[i].nbId, hint:S.cards[i].nbHint};
+      }
       S.cards=j.data.cards||[]; S.txns=j.data.txns||[]; S.pays=j.data.pays||[]; S.del=[];
       if(j.data.ovr) S.ovr=j.data.ovr;
-      for(i=0;i<S.cards.length;i++){ if(!S.cards[i].acct && keep[S.cards[i].id]) S.cards[i].acct=keep[S.cards[i].id]; }
+      for(i=0;i<S.cards.length;i++){
+        if(!S.cards[i].acct && keep[S.cards[i].id]) S.cards[i].acct=keep[S.cards[i].id];
+        var kn=keepNB[S.cards[i].id];
+        if(kn){ if(!S.cards[i].nbId) S.cards[i].nbId=kn.id; if(!S.cards[i].nbHint) S.cards[i].nbHint=kn.hint; }
+      }
       /* 雲端可能是舊格式、且試算表會吃掉前導零，下載後一定要重跑正規化 */
       migrate20();
       save(); go('ov'); toast('已下載 '+S.cards.length+' 張卡 / '+S.txns.length+' 筆');
