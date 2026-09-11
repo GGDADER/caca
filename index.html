@@ -217,7 +217,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v2.5';
+var APP_VER = 'v2.6';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1226,7 +1226,9 @@ function vSettings(){
     + '<label>存取密鑰</label><input id="s_key" placeholder="與 Code.gs 的 API_KEY 相同" value="'+esc(cfg.key)+'">'
     + '<label style="display:flex;align-items:center;gap:9px;margin-top:14px"><input type="checkbox" id="s_acct" style="width:19px;height:19px" '
     + (S.cfg.acctLocal?'checked':'') + ' onchange="S.cfg.acctLocal=this.checked;save();render()">'
-    + '<span style="font-size:13px">銷帳編號只留本機，不上傳雲端</span></label>'
+    + '<span style="font-size:13px">敏感欄位只留本機，不上傳雲端</span></label>'
+    + '<div class="mut2" style="margin:6px 0 0;line-height:1.75">涵蓋 <b>銷帳編號</b>、<b>網銀代號</b>、<b>密碼提示</b>。'
+    + '<span id="s_acct_h">'+acctHintText()+'</span></div>'
     + '<button class="btn sm ghost" onclick="saveSync()">儲存設定</button>'
     + '<div class="brow" style="margin-top:8px">'
     + '<button class="btn sm" onclick="pushCloud()">上傳 ↑</button>'
@@ -1356,17 +1358,19 @@ function editCard(id, clone){
     + '<label>網銀帳號 / 使用者代號</label><input id="c_nbid" placeholder="例：身分證字號、或自訂代號" value="'+esc(c.nbId||'')+'">'
     + '<label>密碼提示</label><input id="c_nbhint" placeholder="例：舊那組＋2 個數字" value="'+esc(c.nbHint||'')+'">'
     + '<div class="mut2" style="margin-top:6px;line-height:1.75">'
-    + '<b style="color:var(--mint)">這兩欄只留在這台裝置，不會上傳雲端。</b><br>'
-    + '<b style="color:var(--rose)">請只填提示，不要填真正的密碼。</b>真正的密碼建議存在 iPhone 內建的「密碼」App，'
-    + '有 Face ID 保護。這兩欄會同步到同一家銀行的所有卡。</div>'
+    + (S.cfg.acctLocal
+        ? '<b style="color:var(--mint)">這兩欄只留在這台裝置，不會上傳雲端。</b><br>'
+        : '<b style="color:var(--brass)">這兩欄會上傳到你的 Google 試算表。</b><br>')
+    + '<b style="color:var(--rose)">請只填自己看得懂的代號與提示，不要填真正的密碼。</b>'
+    + '真正的密碼建議存在 iPhone 內建的「密碼」App，有 Face ID 保護。這兩欄會同步到同一家銀行的所有卡。</div>'
     + '<label style="display:flex;align-items:center;gap:9px;margin-top:11px"><input type="checkbox" id="c_dep" style="width:19px;height:19px" '+(c.dep?'checked':'')+'><span style="font-size:13px">有實體存款帳戶</span></label>'
     + '<label style="display:flex;align-items:center;gap:9px;margin-top:11px"><input type="checkbox" id="c_sec" style="width:19px;height:19px" '+(c.sec?'checked':'')+'><span style="font-size:13px">有證券交割戶</span></label>'
 
     + '<div class="eyebrow">繳費</div>'
     + '<label>e-Bill 銷帳編號</label><input id="c_acct" inputmode="numeric" placeholder="正卡卡號16碼，或 48+身分證字號" value="'+esc(c.acct)+'">'
     + '<div class="mut2" style="margin-top:6px">'+(S.cfg.acctLocal
-        ? '這欄目前設定為<b style="color:var(--mint)">只留在這台裝置</b>，不會上傳雲端。留空也可以，繳費時再從銀行 App 複製。'
-        : '⚠️ 這欄目前<b style="color:var(--rose)">會上傳雲端</b>。若填的是完整卡號，建議到設定頁改成只留本機。')+'</div>'
+        ? '這欄目前<b style="color:var(--mint)">只留在這台裝置</b>，不會上傳雲端。留空也可以，繳費時再從銀行 App 複製。'
+        : '這欄目前<b style="color:var(--brass)">會上傳雲端</b>。若填的是完整卡號，建議改到設定頁關掉上傳，或只填自己記得的部分。')+'</div>'
     + '<label>調額申請日</label><input id="c_adjd" type="date" value="'+esc(c.adjDate||'')+'" onchange="hintAdj()">'
     + '<div class="mut2" id="c_adj_h" style="margin-top:5px">'+adjHintText(c)+'</div>'
     + '<label>顏色</label><div class="chips" id="c_colors">'+copt+'</div>'
@@ -1564,7 +1568,8 @@ function nbBox(c){
       +  '<button class="btn ghost sm" onclick="_nbShow=\''+c.id+'\';openCard(\''+c.id+'\')">'
       +  (S.cfg.privacy?'隱私模式開啟中':'顯示')+'</button>';
   }
-  return h + '<div class="mut2" style="margin:8px 0 4px;line-height:1.7">只存在這台裝置，不會上傳雲端。</div></div>';
+  return h + '<div class="mut2" style="margin:8px 0 4px;line-height:1.7">'
+    + (S.cfg.acctLocal ? '只存在這台裝置，不會上傳雲端。' : '會隨雲端同步備份。') + '</div></div>';
 }
 function openCard(id){
   var c=byId(S.cards,id); if(!c) return;
@@ -2049,6 +2054,12 @@ function redetectAll(){
   save(); render();
   toast(n ? (n+' 張已更新：'+hits.join('、')+(n>3?' …':'')) : '沒有需要更新的卡片');
 }
+function acctHintText(){
+  return S.cfg.acctLocal
+    ? '目前<b style="color:var(--mint)">不上傳</b>，換手機時這三欄要重新輸入。'
+    : '目前<b style="color:var(--brass)">會上傳</b>到你自己的 Google 試算表，換手機下載就有。'
+      + '存取靠網址加密鑰保護，所以<b>只填自己看得懂的代號，不要填完整卡號或真正的密碼</b>。';
+}
 function savePay2(){
   S.cfg.pay = {code:$('y_code').value.replace(/\D/g,'').slice(0,3),
                acct:$('y_acct').value.replace(/[^0-9\-]/g,''),
@@ -2067,9 +2078,8 @@ function pushCloud(){
   for(i=0;i<S.cards.length;i++){
     var o={}, src=S.cards[i];
     for(k in src){ if(src.hasOwnProperty(k)) o[k]=src[k]; }
-    if(S.cfg.acctLocal) o.acct='';
-    /* 網銀帳號與密碼提示一律不上傳，不受銷帳編號那個開關影響 */
-    o.nbId=''; o.nbHint='';
+    /* 銷帳編號、網銀代號、密碼提示：由設定頁的開關決定要不要上傳 */
+    if(S.cfg.acctLocal){ o.acct=''; o.nbId=''; o.nbHint=''; }
     outCards.push(o);
   }
   toast('上傳中…');
