@@ -217,7 +217,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v2.8';
+var APP_VER = 'v2.9';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1126,8 +1126,8 @@ function vAnalysis(){
     +  '<button class="chip'+(ANV.byCyc?'':' on')+'" onclick="ANV.byCyc=false;render()">依消費日</button>'
     +  '<button class="chip'+(ANV.byCyc?' on':'')+'" onclick="ANV.byCyc=true;render()">依帳單期</button>'
     +  '</div><div class="mut2" style="margin:-4px 0 12px">'
-    +  (ANV.byCyc ? '用銀行的結帳週期分月，可以直接跟帳單對帳。'
-                  : '用實際消費日分月。帳單期常跨月，所以跟帳單金額不會一樣。')
+    +  (ANV.byCyc ? '每筆掛在它所屬的那期帳單，金額應與電子帳單的本期應繳一致。'
+                  : '用實際消費日分月。同一期帳單常跨兩個月，所以跟帳單金額不會一樣。')
     +  '</div><div class="chips" style="margin-bottom:14px">'
     +  '<button class="chip'+(m<0?' on':'')+'" onclick="ANV.m=-1;render()">整年</button>';
   for(i=0;i<12;i++)
@@ -1190,8 +1190,8 @@ function vAnalysis(){
       var cd=byId(S.cards,kr[i].k);
       var cn=0, j;
       for(j=0;j<S.txns.length;j++){
-        var tt=S.txns[j], dd2=pd(tt.d);
-        if(tt.cid===kr[i].k && dd2>=from && dd2<=to) cn++;
+        var tt=S.txns[j], k2=txKey(tt);
+        if(tt.cid===kr[i].k && k2>=from && k2<=to) cn++;
       }
       h += '<tr><td>'+esc(cd?cd.name:'（已刪卡）')+'</td>'
         +  '<td class="num" style="text-align:right;color:var(--dim)">'+cn+'</td>'
