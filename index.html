@@ -217,7 +217,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v2.9';
+var APP_VER = 'v3.0';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1167,7 +1167,7 @@ function vAnalysis(){
 
   /* 分類佔比 */
   var cr = rank(A.cat);
-  if(cr.length){
+  if(cr.length > 1){        /* 只有一類（帳單匯入都是「其他」）就不必顯示 */
     h += '<div class="eyebrow">分類佔比</div><div class="card">';
     for(i=0;i<cr.length;i++){
       var co=catOf(cr[i].k), pc = A.total>0 ? cr[i].v/A.total*100 : 0;
@@ -1182,6 +1182,31 @@ function vAnalysis(){
   }
 
   /* 卡片排行 */
+  if(ANV.byCyc){
+    var bk2={}, bn2={}, i2;
+    for(i2=0;i2<S.txns.length;i2++){
+      var t2=S.txns[i2], k3=txKey(t2);
+      if(!k3 || k3<from || k3>to) continue;
+      var cd3=byId(S.cards,t2.cid);
+      var bc3=cd3 ? (normCode(cd3.code) || ('?'+(cd3.name||'').slice(0,3))) : '?';
+      bk2[bc3]=(bk2[bc3]||0)+(Number(t2.a)||0);
+      bn2[bc3]=(bn2[bc3]||0)+1;
+    }
+    var br=rank(bk2);
+    if(br.length){
+      h += '<div class="eyebrow">各銀行帳單對帳</div>'
+        +  '<div class="mut2" style="margin:-4px 0 8px">這裡的金額應該等於該銀行同一期電子帳單的本期應繳。</div>'
+        +  '<div class="card" style="padding:4px 13px 8px"><table class="tbl">'
+        +  '<tr><th>銀行</th><th style="text-align:right">筆數</th><th style="text-align:right">明細加總</th></tr>';
+      for(i2=0;i2<br.length;i2++){
+        h += '<tr><td>'+esc(bankLabel(br[i2].k))+'</td>'
+          +  '<td class="num" style="text-align:right;color:var(--dim)">'+(bn2[br[i2].k]||0)+'</td>'
+          +  '<td class="num" style="text-align:right">'+money(br[i2].v)+'</td></tr>';
+      }
+      h += '</table></div>';
+    }
+  }
+
   var kr = rank(A.card);
   if(kr.length){
     h += '<div class="eyebrow">卡片使用排行</div><div class="card" style="padding:4px 13px 8px"><table class="tbl">'
