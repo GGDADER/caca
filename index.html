@@ -217,7 +217,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v2.7';
+var APP_VER = 'v2.8';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1074,20 +1074,27 @@ function billCard(g, compact){
 }
 
 /* ============ 視圖：分析 ============ */
-var ANV = {y:0, m:-1};   /* m = -1 代表看整年 */
+var ANV = {y:0, m:-1, byCyc:false};   /* m=-1 看整年；byCyc=依帳單期 */
 
-function txAgg(from, to){
-  var out={total:0, n:0, cat:{}, card:{}}, i;
+/* 這筆屬於哪一期：依帳單期（銀行結帳週期）或依消費日 */
+function txKey(t){
+  if(ANV.byCyc) return String(t.cyc||'').slice(0,7) || String(t.d||'').slice(0,7);
+  return String(t.d||'').slice(0,7);
+}
+function txAgg(ym1, ym2){
+  var out={total:0, n:0, spend:0, refund:0, cat:{}, card:{}}, i;
   for(i=0;i<S.txns.length;i++){
-    var t=S.txns[i], d=pd(t.d);
-    if(d<from || d>to) continue;
+    var t=S.txns[i], k=txKey(t);
+    if(!k || k<ym1 || k>ym2) continue;
     var a=Number(t.a)||0;
     out.total+=a; out.n++;
+    if(a>=0) out.spend+=a; else out.refund+=a;
     out.cat[t.c||'他']=(out.cat[t.c||'他']||0)+a;
     out.card[t.cid]=(out.card[t.cid]||0)+a;
   }
   return out;
 }
+function ym(y,m){ return y+'-'+p2(m+1); }
 function rank(obj){
   var arr=[], k;
   for(k in obj){ if(obj.hasOwnProperty(k)) arr.push({k:k, v:obj[k]}); }
@@ -1101,13 +1108,13 @@ function vAnalysis(){
   var y=ANV.y, m=ANV.m;
 
   /* 年度區間 vs 單月區間 */
-  var from = (m<0) ? new Date(y,0,1) : new Date(y,m,1);
-  var to   = (m<0) ? new Date(y,11,31,23,59,59) : new Date(y,m+1,0,23,59,59);
+  var from = (m<0) ? ym(y,0)  : ym(y,m);
+  var to   = (m<0) ? ym(y,11) : ym(y,m);
   var A = txAgg(from, to);
 
   /* 年份切換 */
   var years={}, yl=[];
-  for(i=0;i<S.txns.length;i++) years[String(S.txns[i].d).slice(0,4)]=1;
+  for(i=0;i<S.txns.length;i++) years[txKey(S.txns[i]).slice(0,4)]=1;
   years[String(t.getFullYear())]=1;
   for(var k in years){ if(years.hasOwnProperty(k)) yl.push(k); }
   yl.sort(function(a,b){ return b-a; });
@@ -1115,27 +1122,38 @@ function vAnalysis(){
   var h='<div class="chips" style="margin-bottom:10px">';
   for(i=0;i<yl.length;i++)
     h += '<button class="chip'+(String(y)===yl[i]?' on':'')+'" onclick="ANV.y='+yl[i]+';render()">'+yl[i]+'</button>';
-  h += '</div><div class="chips" style="margin-bottom:14px">'
+  h += '</div><div class="chips" style="margin-bottom:10px">'
+    +  '<button class="chip'+(ANV.byCyc?'':' on')+'" onclick="ANV.byCyc=false;render()">依消費日</button>'
+    +  '<button class="chip'+(ANV.byCyc?' on':'')+'" onclick="ANV.byCyc=true;render()">依帳單期</button>'
+    +  '</div><div class="mut2" style="margin:-4px 0 12px">'
+    +  (ANV.byCyc ? '用銀行的結帳週期分月，可以直接跟帳單對帳。'
+                  : '用實際消費日分月。帳單期常跨月，所以跟帳單金額不會一樣。')
+    +  '</div><div class="chips" style="margin-bottom:14px">'
     +  '<button class="chip'+(m<0?' on':'')+'" onclick="ANV.m=-1;render()">整年</button>';
   for(i=0;i<12;i++)
     h += '<button class="chip'+(m===i?' on':'')+'" onclick="ANV.m='+i+';render()">'+(i+1)+'月</button>';
   h += '</div>';
 
   /* 主數字 */
-  var lastA = (m<0) ? txAgg(new Date(y-1,0,1), new Date(y-1,11,31,23,59,59))
-                    : txAgg(new Date(y,m-1,1), new Date(y,m,0,23,59,59));
+  var lastA = (m<0) ? txAgg(ym(y-1,0), ym(y-1,11))
+                    : (m===0 ? txAgg(ym(y-1,11), ym(y-1,11)) : txAgg(ym(y,m-1), ym(y,m-1)));
   var diff = A.total - lastA.total;
   h += '<div class="hero"><div class="lab">'+(m<0? y+' 年度累積刷卡' : y+' 年 '+(m+1)+' 月刷卡')+'</div>'
     +  '<div class="big" style="color:var(--brass)"><small>NT$</small>'+money(A.total)+'</div>'
     +  '<div class="legend" style="margin-top:8px"><span>'+A.n+' 筆</span>'
     +  '<span style="color:'+(diff>0?'var(--rose)':'var(--mint)')+'">'
     +  (lastA.total? (diff>=0?'▲ ':'▼ ')+money(Math.abs(diff))+'（'+(m<0?'較去年':'較上月')+'）' : '—')+'</span>'
-    +  '<span>平均 '+money(A.n?A.total/A.n:0)+' /筆</span></div></div>';
+    +  '<span>平均 '+money(A.n?A.total/A.n:0)+' /筆</span></div>'
+    +  (A.refund ? '<div class="stat3" style="margin-top:10px">'
+        + '<div><div class="k">消費</div><div class="v num">'+money(A.spend)+'</div></div>'
+        + '<div><div class="k">退款/回饋</div><div class="v num" style="color:var(--mint)">'+money(A.refund)+'</div></div>'
+        + '<div><div class="k">淨額</div><div class="v num" style="color:var(--brass)">'+money(A.total)+'</div></div></div>' : '')
+    +  '</div>';
 
   /* 月趨勢 */
   var mv=[], mx=0;
   for(i=0;i<12;i++){
-    var v=txAgg(new Date(y,i,1), new Date(y,i+1,0,23,59,59)).total;
+    var v=txAgg(ym(y,i), ym(y,i)).total;
     mv.push(v); if(v>mx) mx=v;
   }
   h += '<div class="eyebrow">'+y+' 年月支出</div><div class="card"><div class="bars">';
