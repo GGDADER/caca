@@ -217,7 +217,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v3.0';
+var APP_VER = 'v3.1';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1082,13 +1082,15 @@ function txKey(t){
   return String(t.d||'').slice(0,7);
 }
 function txAgg(ym1, ym2){
-  var out={total:0, n:0, spend:0, refund:0, cat:{}, card:{}}, i;
+  var out={total:0, n:0, spend:0, refund:0, rebate:0, cat:{}, card:{}}, i;
   for(i=0;i<S.txns.length;i++){
     var t=S.txns[i], k=txKey(t);
     if(!k || k<ym1 || k>ym2) continue;
     var a=Number(t.a)||0;
     out.total+=a; out.n++;
-    if(a>=0) out.spend+=a; else out.refund+=a;
+    if(a>=0) out.spend+=a;
+    else if(t.kind==='回饋') out.rebate+=a;
+    else out.refund+=a;
     out.cat[t.c||'他']=(out.cat[t.c||'他']||0)+a;
     out.card[t.cid]=(out.card[t.cid]||0)+a;
   }
@@ -1144,9 +1146,10 @@ function vAnalysis(){
     +  '<span style="color:'+(diff>0?'var(--rose)':'var(--mint)')+'">'
     +  (lastA.total? (diff>=0?'▲ ':'▼ ')+money(Math.abs(diff))+'（'+(m<0?'較去年':'較上月')+'）' : '—')+'</span>'
     +  '<span>平均 '+money(A.n?A.total/A.n:0)+' /筆</span></div>'
-    +  (A.refund ? '<div class="stat3" style="margin-top:10px">'
+    +  ((A.refund || A.rebate) ? '<div class="stat3" style="margin-top:10px">'
         + '<div><div class="k">消費</div><div class="v num">'+money(A.spend)+'</div></div>'
-        + '<div><div class="k">退款/回饋</div><div class="v num" style="color:var(--mint)">'+money(A.refund)+'</div></div>'
+        + (A.rebate ? '<div><div class="k">回饋/折抵</div><div class="v num" style="color:var(--mint)">'+money(A.rebate)+'</div></div>' : '')
+        + (A.refund ? '<div><div class="k">退款</div><div class="v num" style="color:var(--mint)">'+money(A.refund)+'</div></div>' : '')
         + '<div><div class="k">淨額</div><div class="v num" style="color:var(--brass)">'+money(A.total)+'</div></div></div>' : '')
     +  '</div>';
 
