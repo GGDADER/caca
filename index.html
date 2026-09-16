@@ -217,7 +217,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    卡務 Card Desk  v1.0
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    ================================================================== */
-var APP_VER = 'v3.2';
+var APP_VER = 'v3.3';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -2143,9 +2143,9 @@ function gasFetch(opt, cb, label, n){
       throw new Error(t.charAt(0)==='<' ? 'Google 回了錯誤頁' : '非預期回應');
     })
     .catch(function(e){
-      if(n < 3){
-        toast(label+'重試中…（'+(n+1)+'/3）');
-        setTimeout(function(){ gasFetch(opt, cb, label, n+1); }, 3000*n);
+      if(n < 5){
+        toast(label+'重試中…（'+(n+1)+'/5）');
+        setTimeout(function(){ gasFetch(opt, cb, label, n+1); }, 2500*n*n);
       }else{
         cb({ok:false, err:(e && e.message) || '連線失敗'});
       }
