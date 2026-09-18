@@ -135,7 +135,7 @@ main{padding:14px}
 /* ---- 分類排行 ---- */
 .crank{display:flex;align-items:center;gap:9px;margin-bottom:9px}
 .crank .cg{width:22px;flex:none;text-align:center}
-.crank .cn{width:40px;flex:none;font-size:13px;color:var(--dim)}
+.crank .cn{width:74px;flex:none;font-size:13px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .crank .cb{flex:1;min-width:0}
 .crank .cb .gauge{margin:0}
 .crank .cp{width:38px;flex:none;text-align:right;font-size:12px;color:var(--dim)}
@@ -172,6 +172,12 @@ textarea{min-height:96px;resize:vertical;line-height:1.5}
 .seg button{padding:6px 12px;border-radius:7px;font-size:13px;color:var(--dim)}
 .seg button.on{background:var(--slab);color:var(--brass);font-weight:600;box-shadow:0 0 0 1px var(--brassd) inset}
 #recs .frow+.card,#recs .frow+.stat3{margin-top:12px}
+.fgrow{flex:1;min-width:0}
+.fq{margin-bottom:8px}
+.rng{display:flex;align-items:center;gap:8px;margin-top:8px}
+.rng select{flex:1;min-width:0;padding:8px 10px}
+.rng span{color:var(--dim2);font-size:12px;flex:none}
+#rBody{margin-top:12px}
 .afilt>*+*{margin-top:10px}
 .anote{margin:10px 0 0}
 .btn{display:block;width:100%;padding:13px;border-radius:11px;background:var(--brass);color:#191203;
@@ -347,13 +353,15 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    卡務 Card Desk  v3.5
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    v3.5：手機／電腦雙版面、取消 Gmail 逐筆記帳、帳單明細自動分類、紀錄可依銀行篩選
+   v3.6：新增「電動車充電」分類；記帳頁可自訂期間（起迄）與搜尋銀行
    ================================================================== */
-var APP_VER = 'v3.5';
+var APP_VER = 'v3.6';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
   {k:'食', g:'🍜', n:'餐飲'}, {k:'超', g:'🛒', n:'超市'}, {k:'網', g:'📦', n:'網購'},
-  {k:'行', g:'🚗', n:'交通'}, {k:'油', g:'⛽', n:'加油'}, {k:'樂', g:'🎬', n:'娛樂'},
+  {k:'行', g:'🚗', n:'交通'}, {k:'油', g:'⛽', n:'加油'}, {k:'電', g:'⚡', n:'電動車充電'},
+  {k:'樂', g:'🎬', n:'娛樂'},
   {k:'旅', g:'✈️', n:'旅遊'}, {k:'醫', g:'🏥', n:'醫療'}, {k:'費', g:'🧾', n:'繳費'},
   {k:'保', g:'🛡', n:'保險'}, {k:'他', g:'▫️', n:'其他'}
 ];
@@ -363,8 +371,9 @@ var CAT_RULES = [
   ['食', /uber\s*eats|foodpanda|熊貓|外送/i],
   ['保', /保險|人壽|產險|產物|保費|保單|南山|安聯|友邦|保誠|三商美邦|\baia\b/i],
   ['醫', /醫院|診所|醫療|醫學|牙醫|牙科|眼科|耳鼻|皮膚科|婦產|中醫|復健|藥局|藥房|藥師|健保|榮總|長庚|馬偕|慈濟|彰基|秀傳|澄清醫|童綜合|光田|杏一|大樹藥|丁丁藥|啄木鳥|動物醫|檢驗所|體檢|健檢/i],
-  ['油', /中油|台塑石化|台亞|福懋|全國加油|加油|油站|石油|\bcpc\b|supercharg|超充|充電站|充電樁|gogoro\s*network|電池交換/i],
-  ['行', /高鐵|thsr|台鐵|臺鐵|鐵路|捷運|metro|悠遊卡|easy\s*card|一卡通|ipass|uber|計程車|taxi|大車隊|55688|yoxi|停車|parking|嘟嘟房|俥亭|車旅|遠通|\betc\b|etag|國道|客運|公車|統聯|國光|和欣|wemo|irent|和雲|租車|youbike|微笑單車|tesla|特斯拉|汽車|機車|輪胎|保養廠/i],
+  ['電', /supercharg|超充|超級充電|充電站|充電樁|充電槍|快充|evoasis|源點|evalue|華城電能|u-?power|裕電|俥電|icharging|起而行|noodoe|拓連|ionex|gogoro\s*network|電池交換|電動車|\bev\s*charg|tesla|特斯拉/i],
+  ['油', /中油|台塑石化|台亞|福懋|全國加油|加油|油站|石油|\bcpc\b/i],
+  ['行', /高鐵|thsr|台鐵|臺鐵|鐵路|捷運|metro|悠遊卡|easy\s*card|一卡通|ipass|uber|計程車|taxi|大車隊|55688|yoxi|停車|parking|嘟嘟房|俥亭|車旅|遠通|\betc\b|etag|國道|客運|公車|統聯|國光|和欣|wemo|irent|和雲|租車|youbike|微笑單車|汽車|機車|輪胎|保養廠/i],
   ['旅', /航空|airline|airways|air\s*asia|starlux|星宇|虎航|tigerair|樂桃|peach|酷航|scoot|捷星|jetstar|agoda|booking\.com|hotels\.com|expedia|trip\.com|攜程|klook|客路|kkday|airbnb|飯店|酒店|旅館|旅店|民宿|hotel|resort|hostel|旅行社|旅遊|雄獅|易遊|eztravel|可樂旅|東南旅|燦星|免稅|duty\s*free|昇恆昌|采盟|機場|airport/i],
   ['網', /蝦皮|shopee|momo(?!\s*paradise)|富邦媒|pchome|網家|露天|ruten|yahoo|奇摩|博客來|books\.com|amazon|淘寶|taobao|天貓|tmall|京東|酷澎|coupang|東森購物|生活市集|松果|gomaji|17life|樂天市場|aliexpress|速買配|iherb|temu|shein|paypal|網購|購物網|線上購物/i],
   ['樂', /影城|影院|電影|威秀|vieshow|秀泰|國賓|喜樂時代|netflix|spotify|kkbox|youtube|disney|apple\.com\/bill|itunes|google\s*\*?\s*play|steam|playstation|nintendo|任天堂|xbox|kktv|friday\s*影音|line\s*tv|myvideo|catchplay|\bhbo|愛奇藝|iqiyi|錢櫃|好樂迪|\bktv|健身|\bgym\b|運動中心|kktix|tixcraft|拓元|年代售票|寬宏|售票|遊樂|樂園|六福村|劍湖山|麗寶|動物園|博物館|美術館|展覽|書店|誠品|金石堂|遊戲/i],
@@ -1346,64 +1355,133 @@ function pickCat(k, el){ DRAFT.cat=k; markChip(el); }
 function txMonth(t){ return LOG.by==='cyc' ? String(t.cyc||'').slice(0,7) : String(t.d||'').slice(0,7); }
 function setLog(k, v){
   LOG[k] = v;
-  if(k==='by') LOG.m = '';
+  if(k==='by'){ LOG.m=''; LOG.f=''; LOG.t=''; }
   var box=$('recs');
   if(box){ box.innerHTML = recsHTML(); keepChips(); }
   else render();
 }
 /* 消費紀錄：可依月份（或帳單期）與銀行交叉篩選 */
 function recsHTML(){
+  var D = recsData();
+  if(!D.all.length){
+    return '<div class="eyebrow">消費紀錄</div>'
+      + '<div class="card empty"><p>還沒有消費紀錄。<br>在電腦跑 statement_reader.py 匯入帳單，<br>再到設定頁按「下載 ↓」。</p></div>';
+  }
+  return '<div class="eyebrow">消費紀錄<span class="ct">'+D.all.length+' 筆</span></div>'
+    + '<div class="fbar"><div class="seg">'
+    +   '<button class="'+(LOG.by==='d'?'on':'')+'" onclick="setLog(\'by\',\'d\')">依消費日</button>'
+    +   '<button class="'+(LOG.by==='cyc'?'on':'')+'" onclick="setLog(\'by\',\'cyc\')">依帳單期</button>'
+    +   '</div><span class="mut2">'+(LOG.by==='cyc' ? '每筆掛在它所屬的那期帳單' : '用實際消費日分月')+'</span></div>'
+    + '<div class="frow"><div class="flab">'+(LOG.by==='cyc'?'帳單期':'期間')+'</div>'
+    +   '<div class="fgrow" id="rPer">'+perHTML(D)+'</div></div>'
+    + '<div class="frow"><div class="flab">銀行</div><div class="fgrow">'
+    +   '<input id="r_q" class="fq" placeholder="搜尋銀行或卡片，例：星展 / 810 / cube" value="'+esc(LOG.q||'')+'" oninput="setQ(this.value)">'
+    +   '<div id="rBank">'+bankHTML(D)+'</div></div></div>'
+    + '<div id="rBody">'+bodyHTML(D)+'</div>';
+}
+/* 一次算好篩選要用的資料，三個區塊共用 */
+function recsData(){
   var all = S.txns.slice(0).sort(function(a,b){ return a.d<b.d?1:(a.d>b.d?-1:(a.id<b.id?1:-1)); });
-  var h = '<div class="eyebrow">消費紀錄<span class="ct">'+all.length+' 筆</span></div>';
-  if(!all.length){
-    return h + '<div class="card empty"><p>還沒有消費紀錄。<br>在電腦跑 statement_reader.py 匯入帳單，<br>再到設定頁按「下載 ↓」。</p></div>';
+  var D = {all:all, bAll:{}, order:[], mset:{}, months:[], allMonths:[], list:[], bank:{}, txt:{}};
+  if(!all.length) return D;
+  var CM={}, i, t, mk, bk, c, mall={};
+  for(i=0;i<S.cards.length;i++){
+    c=S.cards[i]; CM[c.id]=c;
+    bk=normCode(c.code)||'—';
+    if(!D.txt.hasOwnProperty(bk)) D.txt[bk]=((bk==='—'?'未設定機構':bankLabel(bk))+' '+bk).toUpperCase();
+    D.txt[bk] += ' ' + String(c.name||'').toUpperCase() + ' ' + String(c.last4||'');
   }
-  var CM={}, i, t, mk, bk;
-  for(i=0;i<S.cards.length;i++) CM[S.cards[i].id]=S.cards[i];
-  var bankOf = function(x){ var c=CM[x.cid]; return c ? (normCode(c.code)||'—') : '—'; };
-
-  var bAll={}, order=[];
   for(i=0;i<all.length;i++){
-    bk=bankOf(all[i]);
-    if(!bAll.hasOwnProperty(bk)){ bAll[bk]=0; order.push(bk); }
-    bAll[bk]++;
+    t=all[i]; c=CM[t.cid];
+    bk = c ? (normCode(c.code)||'—') : '—';
+    D.bank[t.id]=bk;
+    if(!D.bAll.hasOwnProperty(bk)){
+      D.bAll[bk]=0; D.order.push(bk);
+      if(!D.txt.hasOwnProperty(bk)) D.txt[bk]=((bk==='—'?'未設定機構':bankLabel(bk))+' '+bk).toUpperCase();
+    }
+    D.bAll[bk]++;
+    mk = txMonth(t);
+    if(mk) mall[mk]=1;
   }
-  if(LOG.b && !bAll.hasOwnProperty(LOG.b)) LOG.b='';
-  order.sort(function(a,b){ return bAll[b]-bAll[a]; });
-
-  var mset={}, bCnt={}, list=[];
+  if(LOG.b && !D.bAll.hasOwnProperty(LOG.b)) LOG.b='';
+  D.order.sort(function(a,b){ return D.bAll[b]-D.bAll[a]; });
+  /* 搜尋字串：比對銀行名稱、代碼與該行卡片名稱 */
+  var q = String(LOG.q||'').toUpperCase().replace(/^\s+|\s+$/g,''), hit={}, any=false;
+  for(bk in D.bAll){
+    if(!D.bAll.hasOwnProperty(bk)) continue;
+    hit[bk] = !q || String(D.txt[bk]||'').indexOf(q)>=0;
+    if(hit[bk]) any=true;
+  }
+  if(!any){ for(bk in hit){ if(hit.hasOwnProperty(bk)) hit[bk]=true; } D.noHit=true; }
+  D.hit = hit;
+  var inBank = function(b){ return LOG.b ? (b===LOG.b) : hit[b]; };
+  var mlist=[];
+  for(var k in mall){ if(mall.hasOwnProperty(k)) mlist.push(k); }
+  mlist.sort(); mlist.reverse();
+  D.allMonths = mlist;
+  if(LOG.m==='*'){
+    if(!LOG.f || !LOG.t){
+      LOG.t = mlist[0]||''; LOG.f = mlist[Math.min(2, mlist.length-1)]||LOG.t;
+    }
+    if(LOG.f > LOG.t){ var sw=LOG.f; LOG.f=LOG.t; LOG.t=sw; }
+  }
+  D.bCnt={};
   for(i=0;i<all.length;i++){
-    t=all[i]; mk=txMonth(t); bk=bankOf(t);
-    if(mk && (!LOG.b || LOG.b===bk)) mset[mk]=(mset[mk]||0)+1;
-    if(!LOG.m || LOG.m===mk) bCnt[bk]=(bCnt[bk]||0)+1;
-    if((!LOG.b || LOG.b===bk) && (!LOG.m || LOG.m===mk)) list.push(t);
+    t=all[i]; bk=D.bank[t.id]; mk=txMonth(t);
+    if(mk && inBank(bk)) D.mset[mk]=(D.mset[mk]||0)+1;
+    if(inPeriod(mk)) D.bCnt[bk]=(D.bCnt[bk]||0)+1;
+    if(inBank(bk) && inPeriod(mk)) D.list.push(t);
   }
-  if(LOG.m && !mset.hasOwnProperty(LOG.m)) mset[LOG.m]=0;
-  var months=[], k2;
-  for(k2 in mset){ if(mset.hasOwnProperty(k2)) months.push(k2); }
-  months.sort(); months.reverse();
-
-  var perLab = LOG.by==='cyc' ? '帳單期' : '月份';
-  h += '<div class="fbar"><div class="seg">'
-    +  '<button class="'+(LOG.by==='d'?'on':'')+'" onclick="setLog(\'by\',\'d\')">依消費日</button>'
-    +  '<button class="'+(LOG.by==='cyc'?'on':'')+'" onclick="setLog(\'by\',\'cyc\')">依帳單期</button>'
-    +  '</div><span class="mut2">'+(LOG.by==='cyc' ? '每筆掛在它所屬的那期帳單' : '用實際消費日分月')+'</span></div>'
-    +  '<div class="frow"><div class="flab">'+perLab+'</div><div class="chips scroll">'
-    +  '<button class="chip'+(LOG.m===''?' on':'')+'" onclick="setLog(\'m\',\'\')">最近</button>';
-  for(i=0;i<months.length;i++){
-    h += '<button class="chip'+(LOG.m===months[i]?' on':'')+(mset[months[i]]?'':' zero')+'" onclick="setLog(\'m\',\''+months[i]+'\')">'
-      +  months[i].replace('-','/')+'<span class="n">'+mset[months[i]]+'</span></button>';
+  if(LOG.m && LOG.m!=='*' && !D.mset.hasOwnProperty(LOG.m)) D.mset[LOG.m]=0;
+  for(var k2 in D.mset){ if(D.mset.hasOwnProperty(k2)) D.months.push(k2); }
+  D.months.sort(); D.months.reverse();
+  return D;
+}
+function inPeriod(mk){
+  if(!LOG.m) return true;
+  if(LOG.m==='*') return !!mk && mk>=LOG.f && mk<=LOG.t;
+  return mk===LOG.m;
+}
+function perHTML(D){
+  var h='<div class="chips scroll">'
+    + '<button class="chip'+(LOG.m===''?' on':'')+'" onclick="setLog(\'m\',\'\')">最近</button>'
+    + '<button class="chip'+(LOG.m==='*'?' on':'')+'" onclick="setLog(\'m\',\'*\')">自訂期間</button>', i;
+  for(i=0;i<D.months.length;i++){
+    h += '<button class="chip'+(LOG.m===D.months[i]?' on':'')+(D.mset[D.months[i]]?'':' zero')+'" onclick="setLog(\'m\',\''+D.months[i]+'\')">'
+      +  D.months[i].replace('-','/')+'<span class="n">'+D.mset[D.months[i]]+'</span></button>';
   }
-  h += '</div></div><div class="frow"><div class="flab">銀行</div><div class="chips scroll">'
-    +  '<button class="chip'+(LOG.b===''?' on':'')+'" onclick="setLog(\'b\',\'\')">全部</button>';
-  for(i=0;i<order.length;i++){
-    bk=order[i];
-    var bn = bk==='—' ? '未設定機構' : (bankName(bk)||bk), bc=bCnt[bk]||0;
+  h += '</div>';
+  if(LOG.m==='*'){
+    h += '<div class="rng"><select onchange="setRange(this.value,null)">'+monthOpts(D.allMonths, LOG.f)+'</select>'
+      +  '<span>～</span><select onchange="setRange(null,this.value)">'+monthOpts(D.allMonths, LOG.t)+'</select></div>';
+  }
+  return h;
+}
+function monthOpts(list, cur){
+  var h='', i;
+  for(i=0;i<list.length;i++)
+    h += '<option value="'+list[i]+'"'+(list[i]===cur?' selected':'')+'>'+list[i].replace('-','/')+'</option>';
+  return h;
+}
+function bankHTML(D){
+  var h='<div class="chips scroll">'
+    + '<button class="chip'+(LOG.b===''?' on':'')+'" onclick="setLog(\'b\',\'\')">'
+    + (LOG.q && !D.noHit ? '符合的全部' : '全部')+'</button>', i, bk, shown=0;
+  for(i=0;i<D.order.length;i++){
+    bk=D.order[i];
+    if(!D.hit[bk] && bk!==LOG.b) continue;
+    shown++;
+    var bn = bk==='—' ? '未設定機構' : (bankName(bk)||bk), bc=D.bCnt[bk]||0;
     h += '<button class="chip'+(LOG.b===bk?' on':'')+(bc?'':' zero')+'" onclick="setLog(\'b\',\''+bk+'\')" title="'+esc(bk==='—'?bn:bankLabel(bk))+'">'
       +  esc(bn)+'<span class="n">'+bc+'</span></button>';
   }
-  h += '</div></div>';
-
+  h += '</div>';
+  if(D.noHit) h += '<div class="mut2" style="margin-top:6px">沒有銀行或卡片符合「'+esc(LOG.q)+'」，先顯示全部。</div>';
+  else if(LOG.q) h += '<div class="mut2" style="margin-top:6px">符合「'+esc(LOG.q)+'」的有 '+shown+' 家。</div>';
+  return h;
+}
+function bodyHTML(D){
+  var h='', i, list=D.list;
   if(LOG.m){
     var sum=0, spend=0, back=0;
     for(i=0;i<list.length;i++){
@@ -1415,7 +1493,10 @@ function recsHTML(){
       +  '<div><div class="k">回饋 / 退款</div><div class="v num" style="color:var(--mint)">'+money(back)+'</div></div>'
       +  '<div><div class="k">合計 '+list.length+' 筆</div><div class="v num" style="color:var(--brass)">'+money(sum)+'</div></div>'
       +  '</div>';
-    if(LOG.by==='cyc' && LOG.b)
+    if(LOG.m==='*')
+      h += '<div class="mut2" style="margin:-4px 0 10px">'+LOG.f.replace('-','/')+' ～ '+LOG.t.replace('-','/')
+        +  '（'+(LOG.by==='cyc'?'帳單期':'消費月')+'）'+(LOG.b||LOG.q?'，'+(LOG.b?bankLabel(LOG.b):'符合搜尋的銀行'):'')+'</div>';
+    else if(LOG.by==='cyc' && LOG.b)
       h += '<div class="mut2" style="margin:-4px 0 10px">同一家銀行、同一期的合計，應等於那期電子帳單的本期應繳。</div>';
   }
   var shown = LOG.m ? list.length : Math.min(20, list.length);
@@ -1424,8 +1505,23 @@ function recsHTML(){
   for(i=0;i<shown;i++) h += txRow(list[i]);
   h += '</div>';
   if(list.length>shown)
-    h += '<div class="mut2" style="margin-top:8px">只顯示最近 '+shown+' 筆（共 '+list.length+' 筆），點上面的'+perLab+'看全部。</div>';
+    h += '<div class="mut2" style="margin-top:8px">只顯示最近 '+shown+' 筆（共 '+list.length+' 筆），點上面的期間看全部。</div>';
   return h;
+}
+/* 搜尋時只重畫清單，不重畫輸入框本身，注音輸入到一半才不會被打斷 */
+function setQ(v){
+  LOG.q = v;
+  var D = recsData(), a=$('rPer'), b=$('rBank'), c=$('rBody');
+  if(a) a.innerHTML = perHTML(D);
+  if(b) b.innerHTML = bankHTML(D);
+  if(c) c.innerHTML = bodyHTML(D);
+  keepChips();
+}
+function setRange(f, t){
+  if(f) LOG.f=f;
+  if(t) LOG.t=t;
+  LOG.m='*';
+  setQ(LOG.q);
 }
 function srcTag(t){
   var s=String(t.src||'');
@@ -1522,7 +1618,9 @@ function billCard(g, compact){
 
 /* ============ 視圖：分析 ============ */
 var ANV = {y:0, m:-1, byCyc:false};   /* 分析頁：m=-1 看整年；byCyc=依帳單期 */
-var LOG = {m:'', b:'', by:'d'};       /* 記帳頁的紀錄篩選：m=月份（空＝最近）、b=銀行代碼（空＝全部）、by=d 依消費日／cyc 依帳單期 */
+/* 記帳頁的紀錄篩選：m=月份（空＝最近、'*'＝自訂期間 f～t）、b=銀行代碼（空＝全部）、
+   by=d 依消費日／cyc 依帳單期、q=銀行搜尋字串 */
+var LOG = {m:'', b:'', by:'d', f:'', t:'', q:''};
 
 /* 這筆屬於哪一期：依帳單期（銀行結帳週期）或依消費日 */
 function txKey(t){
