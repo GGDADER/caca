@@ -354,8 +354,9 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    單檔 PWA · ES5 · 資料存 localStorage · 雲端同步為選配
    v3.5：手機／電腦雙版面、取消 Gmail 逐筆記帳、帳單明細自動分類、紀錄可依銀行篩選
    v3.6：新增「電動車充電」分類；記帳頁可自訂期間（起迄）與搜尋銀行
+   v3.7：帳單金額為 0 的銀行不再出現在「即將到期」
    ================================================================== */
-var APP_VER = 'v3.6';
+var APP_VER = 'v3.7';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1194,6 +1195,8 @@ function upcoming(days){
   for(i=0;i<gs.length;i++){
     var g=gs[i];
     if(g.dd > days) continue;
+    /* 帳單已經出來、金額是 0（這期沒消費或已全額折抵）就沒東西要繳，不必提醒 */
+    if(!g.amt && hasOvrG(g)) continue;
     if(g.paid && g.dd < 0) continue;
     if(!g.amt && !g.paid && g.dd < 0) continue;
     out.push(g);
