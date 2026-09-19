@@ -355,8 +355,10 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.5：手機／電腦雙版面、取消 Gmail 逐筆記帳、帳單明細自動分類、紀錄可依銀行篩選
    v3.6：新增「電動車充電」分類；記帳頁可自訂期間（起迄）與搜尋銀行
    v3.7：帳單金額為 0 的銀行不再出現在「即將到期」
+   v3.8：機構清單補齊台灣 45 家（未來申請新卡不用改程式）
+   v3.9：認得簽帳金融卡（直接扣款，不佔額度、沒有帳單）
    ================================================================== */
-var APP_VER = 'v3.7';
+var APP_VER = 'v3.9';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -387,11 +389,13 @@ var TAB_NAME = {ov:'總覽', cd:'卡片', add:'記帳', bl:'帳單', an:'分析'
 /* e-Bill 全國繳費網「信用卡機構」代號（參考用，實際以帳單或 e-Bill 選單為準） */
 var BANKS = [
   ['004','臺灣銀行'],['005','土地銀行'],['006','合作金庫'],['007','第一銀行'],['008','華南銀行'],
-  ['009','彰化銀行'],['011','上海商銀'],['012','台北富邦'],['013','國泰世華'],['016','高雄銀行'],
-  ['017','兆豐銀行'],['048','王道銀行'],['050','臺灣企銀'],['052','渣打銀行'],['053','台中銀行'],
-  ['054','京城銀行'],['081','匯豐(台灣)'],['103','新光銀行'],['108','陽信銀行'],['118','板信銀行'],
-  ['147','三信商銀'],['700','中華郵政'],['803','聯邦銀行'],['805','遠東商銀'],['806','元大銀行'],
-  ['807','永豐銀行'],['808','玉山銀行'],['809','凱基銀行'],['810','星展(台灣)'],['812','台新銀行'],
+  ['009','彰化銀行'],['011','上海商銀'],['012','台北富邦'],['013','國泰世華'],['015','輸出入銀行'],
+  ['016','高雄銀行'],['017','兆豐銀行'],['018','全國農業金庫'],['021','花旗(台灣)'],['039','澳盛(台灣)'],
+  ['040','中華開發'],['048','王道銀行'],['050','臺灣企銀'],['052','渣打銀行'],['053','台中銀行'],
+  ['054','京城銀行'],['075','東亞銀行'],['081','匯豐(台灣)'],['101','瑞興銀行'],['102','華泰銀行'],
+  ['103','新光銀行'],['108','陽信銀行'],['118','板信銀行'],['147','三信商銀'],['700','中華郵政'],
+  ['803','聯邦銀行'],['805','遠東商銀'],['806','元大銀行'],['807','永豐銀行'],['808','玉山銀行'],
+  ['809','凱基銀行'],['810','星展(台灣)'],['812','台新銀行'],['814','大眾銀行'],['815','日盛銀行'],
   ['816','安泰銀行'],['822','中國信託'],['823','將來銀行'],['824','LINE Bank'],['826','樂天國際']
 ];
 
@@ -410,20 +414,26 @@ var NET_KW = [
 var TIER_KW= [['頂級卡',/無限卡|infinite|世界卡|world|御璽|signature|極[致緻]卡|the\s*class|尊御|尊榮|黑卡|centurion|鼎極|璀璨/i],
               ['商務卡',/商務|企業|采鑽|business|corporate/i]];
 var TRA_KW = [['悠遊卡',/悠遊|easy\s*card/i],['一卡通',/一卡通|i\s*pass|ipass/i],['iCash',/icash|愛金/i]];
+/* 簽帳金融卡：刷卡直接從存款帳戶扣，不佔信用額度、也沒有月結帳單 */
+var DEBIT_KW = /簽帳金融卡|簽帳卡|金融卡|\bdebit\b|遛狗卡|將將卡/i;
 
 /* 銀行官網（首頁，最穩定；每張卡可自訂覆蓋） */
 var BANK_SITE = {
  '004':'https://www.bot.com.tw','005':'https://www.landbank.com.tw','006':'https://www.tcb-bank.com.tw',
  '007':'https://www.firstbank.com.tw','008':'https://www.hncb.com.tw','009':'https://www.bankchb.com',
  '011':'https://www.scsb.com.tw','012':'https://www.fubon.com','013':'https://www.cathaybk.com.tw',
- '016':'https://www.bok.com.tw','017':'https://www.megabank.com.tw','048':'https://www.o-bank.com',
- '050':'https://www.tbb.com.tw','052':'https://www.sc.com/tw','053':'https://www.tcbbank.com.tw',
- '081':'https://www.hsbc.com.tw','103':'https://www.skbank.com.tw','700':'https://www.post.gov.tw',
- '803':'https://www.ubot.com.tw','805':'https://www.feib.com.tw','806':'https://www.yuantabank.com.tw',
- '807':'https://bank.sinopac.com','808':'https://www.esunbank.com','809':'https://www.kgibank.com.tw',
- '810':'https://www.dbs.com.tw','812':'https://www.taishinbank.com.tw','816':'https://www.entiebank.com.tw',
- '822':'https://www.ctbcbank.com','823':'https://www.nextbank.com.tw','824':'https://www.linebank.com.tw',
- '826':'https://www.rakuten-bank.com.tw'};
+ '015':'https://www.eximbank.com.tw','016':'https://www.bok.com.tw','017':'https://www.megabank.com.tw',
+ '018':'https://www.agribank.com.tw','021':'https://www.citibank.com.tw','039':'https://www.anz.com.tw',
+ '040':'https://www.cdibh.com','048':'https://www.o-bank.com','050':'https://www.tbb.com.tw',
+ '052':'https://www.sc.com/tw','053':'https://www.tcbbank.com.tw','075':'https://www.hkbea.com.tw',
+ '081':'https://www.hsbc.com.tw','101':'https://www.taipeistarbank.com.tw','102':'https://www.hwataibank.com.tw',
+ '103':'https://www.skbank.com.tw','700':'https://www.post.gov.tw','803':'https://www.ubot.com.tw',
+ '805':'https://www.feib.com.tw','806':'https://www.yuantabank.com.tw','807':'https://bank.sinopac.com',
+ '808':'https://www.esunbank.com','809':'https://www.kgibank.com.tw','810':'https://www.dbs.com.tw',
+ '812':'https://www.taishinbank.com.tw','814':'https://www.yuantabank.com.tw','815':'https://www.jihsunbank.com.tw',
+ '816':'https://www.entiebank.com.tw','822':'https://www.ctbcbank.com','823':'https://www.nextbank.com.tw',
+ '824':'https://www.linebank.com.tw','826':'https://www.rakuten-bank.com.tw'
+};
 
 /* 卡名關鍵字 → 機構代碼，用於修復被試算表吃掉或漏填的代碼 */
 var BANK_ALIAS = [
@@ -437,7 +447,11 @@ var BANK_ALIAS = [
   ['048',/王道|o-?bank/i], ['017',/兆豐/i], ['016',/高雄銀/i], ['013',/國泰|cube|cathay/i],
   ['012',/富邦|fubon/i], ['011',/上海商銀/i], ['009',/彰銀|彰化銀/i], ['008',/華南|華銀/i],
   ['007',/第一銀|一銀|firstbank/i], ['006',/合庫|合作金庫/i], ['005',/土地銀|土銀/i],
-  ['004',/[台臺]灣銀行|台銀|臺銀/i]
+  ['004',/[台臺]灣銀行|台銀|臺銀/i],
+  ['015',/輸出入銀行/i], ['018',/農業金庫/i], ['021',/花旗|citi/i], 
+  ['039',/澳盛/i], ['040',/中華開發|開發金/i], ['075',/東亞銀/i], 
+  ['101',/瑞興/i], ['102',/華泰/i], ['814',/大眾銀/i], 
+  ['815',/日盛/i]
 ];
 var PALETTE = ['#d4a24c','#4fd1a5','#6ea8fe','#f2607a','#b98cf0','#f0b429','#5ec8c8','#e08b5a','#9aa8bd','#7fd06b'];
 
@@ -487,7 +501,7 @@ function toWanIn(n){
 }
 /* 依卡片名稱猜卡別 / 等級 / 行動票證 */
 function detectCard(name){
-  var s=String(name||''), r={net:'',tier:'',tra:''}, i;
+  var s=String(name||''), r={net:'',tier:'',tra:'',deb:DEBIT_KW.test(s)}, i;
   for(i=0;i<NET_KW.length;i++) if(NET_KW[i][1].test(s)){ r.net=NET_KW[i][0]; break; }
   for(i=0;i<TIER_KW.length;i++) if(TIER_KW[i][1].test(s)){ r.tier=TIER_KW[i][0]; break; }
   if(!r.tier) r.tier='一般卡';
@@ -497,9 +511,9 @@ function detectCard(name){
 }
 /* 共用額度池：同一家銀行且都勾了共用，額度只算一次（取最大值） */
 function poolOf(c){
-  if(!c || c.off || !c.code)
-    return {limit:Number(c?c.limit:0)||0, used:c?usedOf(c):0, n:1, shared:false};
-  var cs=activeCards(), L=0, U=0, n=0, i;
+  if(!c || c.off || c.deb || !c.code)
+    return {limit:Number(c&&!c.deb?c.limit:0)||0, used:c?usedOf(c):0, n:1, shared:false};
+  var cs=creditCards(), L=0, U=0, n=0, i;
   for(i=0;i<cs.length;i++){
     var x=cs[i];
     if(normCode(x.code)!==normCode(c.code)) continue;
@@ -567,7 +581,7 @@ function nextColor(){
 }
 /* 依發卡機構彙總：同一家銀行的卡合併成一列 */
 function byBank(){
-  var cs=activeCards(), map={}, order=[], i;
+  var cs=creditCards(), map={}, order=[], i;
   for(i=0;i<cs.length;i++){
     var c=cs[i], k=c.code || ('?'+(c.name||'未分類').slice(0,3));
     if(!map[k]){
@@ -834,6 +848,7 @@ function migrate20(){
     c=S.cards[i];
     if(!c.shr && c.code){ c.shr = true; if(!S.cfg.mig20) n++; }
     if(c.traOn===undefined) c.traOn=false;
+    if(c.deb===undefined) c.deb = detectCard(c.name).deb;
     if(c.net===undefined || c.tier===undefined || c.tra===undefined){
       var d=detectCard(c.name);
       if(c.net===undefined)  c.net=d.net;
@@ -929,6 +944,10 @@ function usedOf(c){
 function activeCards(){
   var a=[]; for(var i=0;i<S.cards.length;i++){ if(!S.cards[i].off) a.push(S.cards[i]); } return a;
 }
+/* 算額度、算帳單只看信用卡。簽帳金融卡是從存款扣的，算進去可用額度會憑空少一截。 */
+function creditCards(){
+  var a=[]; for(var i=0;i<S.cards.length;i++){ if(!S.cards[i].off && !S.cards[i].deb) a.push(S.cards[i]); } return a;
+}
 function totals(){
   var bk=byBank(), L=0, U=0, i;
   for(i=0;i<bk.length;i++){ L+=bk[i].limit; U+=bk[i].used; }
@@ -936,7 +955,7 @@ function totals(){
 }
 /* 額度光譜的分段：共用池算一段，獨立卡各自一段 */
 function pools(){
-  var cs=activeCards(), out=[], seen={}, i;
+  var cs=creditCards(), out=[], seen={}, i;
   for(i=0;i<cs.length;i++){
     var c=cs[i];
     if(c.code){
@@ -962,7 +981,7 @@ function pctColor(p){
  * 沒有機構代碼的卡各自獨立成一組。
  */
 function billGroups(){
-  var cs=activeCards(), map={}, order=[], i, j;
+  var cs=creditCards(), map={}, order=[], i, j;
   for(i=0;i<cs.length;i++){
     var c=cs[i], code=normCode(c.code);
     var k = code ? ('B'+code+'|'+c.close+'|'+c.due+'|'+(c.dueNext?1:0)) : ('C'+c.id);
@@ -1172,6 +1191,17 @@ function emptyState(){
     + '<p>還沒有卡片。<br>先加一張，填額度、結帳日、繳款截止日，<br>其他都會自己算。</p>'
     + '<button class="btn" style="max-width:240px;margin:22px auto 0" onclick="editCard(\'\')">新增第一張卡</button></div>';
 }
+function cardMonth(c){
+  var t=today(), a=new Date(t.getFullYear(),t.getMonth(),1),
+      b=new Date(t.getFullYear(),t.getMonth()+1,0,23,59,59), s=0, i;
+  for(i=0;i<S.txns.length;i++){
+    var x=S.txns[i];
+    if(x.cid!==c.id) continue;
+    var d=pd(x.d);
+    if(d>=a && d<=b) s += Number(x.a)||0;
+  }
+  return s;
+}
 function monthSpend(off){
   var t=today(), y=t.getFullYear(), m=t.getMonth()+off, s=0;
   var a=new Date(y,m,1), b=new Date(y,m+1,0,23,59,59);
@@ -1307,22 +1337,30 @@ function cardRow(c, i){
     + '<div class="top"><span class="nm">'+esc(c.name||'未命名')+'</span>'
     + '<span class="l4">•'+esc(c.last4||'····')+'</span>'
     + (c.off?'<span class="pill d" style="margin-left:4px">停用</span>':'')
-    + '<span class="sp"></span><span class="amt num" style="color:'+pctColor(p)+'">'+wan(lim-u)+'</span></div>'
+    + '<span class="sp"></span>'
+    + (c.deb ? '<span class="amt num" style="color:var(--dim)" title="簽帳金融卡不佔信用額度">簽帳</span>'
+             : '<span class="amt num" style="color:'+pctColor(p)+'">'+wan(lim-u)+'</span>') + '</div>'
     + '<div class="tags">'
     + (c.net?'<span class="tg net">'+esc(c.net)+'</span>':'')
     + (c.tier&&c.tier!=='一般卡'?'<span class="tg hi">'+esc(c.tier)+'</span>':'')
     + (c.tra&&c.tra!=='無'?'<span class="tg'+(c.traOn?' ok':'')+'">'+esc(c.tra)+(c.traOn?' 已啟用':' 未啟用')+'</span>':'')
-    + (c.auto?'<span class="tg ok">自動扣款</span>':'')
+    + (c.deb?'<span class="tg hi">簽帳金融卡</span>':'')
+    + (c.auto&&!c.deb?'<span class="tg ok">自動扣款</span>':'')
     + (c.exp?'<span class="tg'+(expSoon(c)?' warn':'')+'">'+esc(expIn(c.exp))+' 到期</span>':'')
     + '</div>'
-    + '<div class="gauge"><i style="width:'+Math.max(0,Math.min(100,p)).toFixed(1)+'%;background:'+pctColor(p)+'"></i></div>'
-    + '<div class="ln"><span>已用 <b class="num" style="color:var(--txt)">'+wan(u)+'</b> / '+wan(lim)+'</span>'
-    + '<span>'+p.toFixed(0)+'%</span></div>'
-    + (P.shared?'<div class="ln" style="margin-top:3px;color:var(--dim2)"><span>本卡已用 '+money(mine)+'</span><span>同行 '+P.n+' 張</span></div>':'')
-    + '<div class="track">'+trk
-    + '<div class="ln" style="margin-top:8px"><span>本期未出帳 <b class="num" style="color:var(--txt)">'+money(ub)+'</b></span>'
-    + '<span>本卡本期 <b class="num" style="color:'+(paid?'var(--mint)':'var(--txt)')+'">'+money(st)+'</b></span></div>'
-    + '</div></div>';
+    /* 簽帳金融卡沒有額度也沒有帳單週期，那些欄位對它沒有意義 */
+    + (c.deb
+      ? '<div class="ln" style="margin-top:9px"><span>本月消費 <b class="num" style="color:var(--txt)">'
+        + money(cardMonth(c))+'</b></span><span>刷卡直接從存款帳戶扣款</span></div>'
+      : '<div class="gauge"><i style="width:'+Math.max(0,Math.min(100,p)).toFixed(1)+'%;background:'+pctColor(p)+'"></i></div>'
+        + '<div class="ln"><span>已用 <b class="num" style="color:var(--txt)">'+wan(u)+'</b> / '+wan(lim)+'</span>'
+        + '<span>'+p.toFixed(0)+'%</span></div>'
+        + (P.shared?'<div class="ln" style="margin-top:3px;color:var(--dim2)"><span>本卡已用 '+money(mine)+'</span><span>同行 '+P.n+' 張</span></div>':'')
+        + '<div class="track">'+trk
+        + '<div class="ln" style="margin-top:8px"><span>本期未出帳 <b class="num" style="color:var(--txt)">'+money(ub)+'</b></span>'
+        + '<span>本卡本期 <b class="num" style="color:'+(paid?'var(--mint)':'var(--txt)')+'">'+money(st)+'</b></span></div>'
+        + '</div>')
+    + '</div>';
 }
 
 /* ============ 視圖：記帳 ============ */
@@ -1997,6 +2035,9 @@ function editCard(id, clone){
     + '<div class="g3"><div><label>卡別</label><select id="c_net">'+selOpt(['']. concat(NETS), c.net)+'</select></div>'
     + '<div><label>等級</label><select id="c_tier">'+selOpt(TIERS, c.tier||'一般卡')+'</select></div>'
     + '<div><label>行動票證</label><select id="c_tra">'+selOpt(TRANS, c.tra||'無')+'</select></div></div>'
+    + '<label class="chk"><input type="checkbox" id="c_debit" '+(c.deb?'checked':'')+'>'
+    + '<span>這是<b>簽帳金融卡</b>（刷卡直接從存款帳戶扣款）</span></label>'
+    + '<div class="mut2" style="margin-top:5px">勾起來之後：不計入信用額度、不出現在帳單頁與行事曆提醒，但消費照記、照分析。</div>'
     + '<div class="g2"><div><label>到期 MM/YY</label><input id="c_exp" type="text" inputmode="numeric" maxlength="5" placeholder="08/29" value="'+esc(expIn(c.exp))+'"></div>'
     + '<div><label>行動票證已啟用</label><select id="c_traon">'+selOpt(['未啟用','已啟用'], c.traOn?'已啟用':'未啟用')+'</select></div></div>'
     + '<label>卡片官網（留空用內建銀行官網）</label><input id="c_site" inputmode="url" placeholder="https://" value="'+esc(c.site)+'">'
@@ -2110,6 +2151,7 @@ function saveCard(){
   c.dep   = $('c_dep') ? $('c_dep').checked : false;
   c.sec   = $('c_sec') ? $('c_sec').checked : false;
   c.traOn = $('c_traon') ? ($('c_traon').value === '已啟用') : !!c.traOn;
+  c.deb   = $('c_debit') ? $('c_debit').checked : !!c.deb;
   c.exp   = $('c_exp') ? expParse($('c_exp').value) : (c.exp||'');
   c.shr   = !!c.code;                 /* 同行一律共用額度，不再逐張設定 */
   /* 與銀行的關係（網銀 / 存款戶 / 證券戶）屬於銀行層級，同行自動同步 */
@@ -2243,6 +2285,7 @@ function openCard(id){
         +(dayDiff(today(),pd(c.adjNext))<=0?'var(--mint)':'var(--txt)')+'">'+esc(c.adjNext)
         +(dayDiff(today(),pd(c.adjNext))<=0?'　可申請':'　剩 '+dayDiff(today(),pd(c.adjNext))+' 天')+'</td></tr>':'')
     + (P.shared?'<tr><td>本卡已用</td><td class="num" style="text-align:right">'+money(mine)+'（同行 '+P.n+' 張）</td></tr>':'')
+    + (c.deb?'<tr><td>卡片種類</td><td style="text-align:right;color:var(--brass)">簽帳金融卡（直接從存款扣款）</td></tr>':'')
     + '<tr><td>卡別 / 等級</td><td style="text-align:right">'+esc((c.net||'—')+' · '+(c.tier||'一般卡'))+'</td></tr>'
     + (c.tra&&c.tra!=='無'?'<tr><td>行動票證</td><td style="text-align:right">'+esc(c.tra)+' · <span style="color:'+(c.traOn?'var(--mint)':'var(--dim2)')+'">'+(c.traOn?'已啟用':'未啟用')+'</span></td></tr>':'')
     + (c.exp?'<tr><td>卡片到期</td><td class="num" style="text-align:right;color:'+(expSoon(c)?'var(--rose)':'var(--txt)')+'">'+esc(expIn(c.exp))+'</td></tr>':'')
@@ -2620,7 +2663,7 @@ function icsAdd(L, uidS, start, summary, desc, rrule, alarms){
 }
 function buildICS(){
   var L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//CardDesk//TW//ZH','CALSCALE:GREGORIAN','METHOD:PUBLISH','X-WR-CALNAME:卡務 信用卡提醒'];
-  var cs=activeCards(), t=today(), i, j, rd=Math.max(0, Number(S.cfg.remindDays||3));
+  var cs=creditCards(), t=today(), i, j, rd=Math.max(0, Number(S.cfg.remindDays||3));
   var dueAl = [];
   if(rd>=2) dueAl.push(':-P'+(rd-1)+'DT15H');
   dueAl.push(':-PT15H');            /* 前一天 09:00 */
@@ -2759,6 +2802,7 @@ function redetectAll(){
     if(d.net && c.net!==d.net){ c.net=d.net; ch.push(d.net); }
     if(d.tier!=='一般卡' && c.tier!==d.tier){ c.tier=d.tier; ch.push(d.tier); }
     if(d.tra!=='無' && c.tra!==d.tra){ c.tra=d.tra; ch.push(d.tra); }
+    if(d.deb && !c.deb){ c.deb=true; ch.push('簽帳金融卡'); }
     if(ch.length){ n++; if(hits.length<3) hits.push(c.name+'→'+ch.join('/')); }
   }
   save(); render();
