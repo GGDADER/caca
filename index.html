@@ -362,8 +362,10 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
    v3.13：帳單頁不再列「沒帳單而且推估是 0」的銀行
    v3.14：帳單卡片可以點開看那一期的消費明細；即將到期不再列 0 元帳單
+   v3.15：帳單標出期別；繳款紀錄改顯示銀行、可點開看那期明細；
+          修好「結帳日一改，已繳的帳單又變回未繳」導致的重複繳款
    ================================================================== */
-var APP_VER = 'v3.14';
+var APP_VER = 'v3.15';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1064,11 +1066,15 @@ function gByKey(k){
 }
 function ovrKeyG(g){ return g.key+'@'+g.cyc; }
 function hasOvrG(g){ return !!(S.ovr && S.ovr[ovrKeyG(g)] !== undefined); }
+/* 週期鍵是「結帳日」的完整日期。卡片的結帳日會被帳單更新（v3.14 起），
+   一改，舊繳款紀錄的鍵就對不上，已繳的帳單會變回未繳，使用者再按一次
+   就多出一筆重複。比對只看年月就穩了 —— 一個月本來就只會結帳一次。 */
+function sameCyc(a, b){ return String(a||'').slice(0,7) === String(b||'').slice(0,7); }
 function paidOfG(g){
   var i,j;
   for(i=0;i<S.pays.length;i++){
     var p=S.pays[i];
-    if(String(p.cyc)!==g.cyc) continue;
+    if(!sameCyc(p.cyc, g.cyc)) continue;
     for(j=0;j<g.cards.length;j++) if(g.cards[j].id===p.cid) return p;
   }
   return null;
@@ -1662,15 +1668,23 @@ function vBills(){
     h = '<div class="card txl">';
     for(i=0;i<ps.length && i<20;i++){
       var p=ps[i], c2=byId(S.cards,p.cid);
-      h += '<div class="tx"><div class="cat">✓</div>'
-        + '<div class="tm"><div class="m">'+esc(c2?c2.name:'（已刪卡）')+'</div><div class="d">'+esc(p.d)+(p.n?' · '+esc(p.n):'')+'</div></div>'
+      /* 顯示「銀行」而不是卡別：同一家銀行的多張卡共用一份帳單，
+         繳的也是整家的錢，寫某一張卡的名字會誤導。 */
+      var who = c2 ? (bankLabel(c2.code) || c2.name) : '（已刪卡）';
+      h += '<div class="tx" onclick="paySheet(\''+jsq(p.id)+'\')" style="cursor:pointer">'
+        + '<div class="cat">✓</div>'
+        + '<div class="tm"><div class="m">'+esc(who)+'</div><div class="d">'
+        + esc(cycLabel(p.cyc))+' 期 · 繳於 '+esc(p.d)+(p.n?' · '+esc(p.n):'')+'</div></div>'
         + '<div class="sp"></div><div class="a num" style="color:var(--mint)">-'+money(p.a)+'</div>'
-        + '<button class="ico" style="width:28px;height:28px;font-size:13px;margin-left:8px" onclick="delPay(\''+p.id+'\')" aria-label="刪除這筆繳款">✕</button></div>';
+        + '<button class="ico" style="width:28px;height:28px;font-size:13px;margin-left:8px" onclick="event.stopPropagation();delPay(\''+jsq(p.id)+'\')" aria-label="刪除這筆繳款">✕</button></div>';
     }
     B.pays = sec('繳款紀錄', h + '</div>');
   }
   return lay(B, ['hero','list','pays'], [['list'],['pays']], 'c84', ['hero']);
 }
+/* 2026-09-05 → 2026/09。帳單上的「期別」就用結帳日的年月，一個月一期。 */
+function cycLabel(cyc){ return String(cyc||'').slice(0,7).replace('-', '/'); }
+
 function billCard(g, compact){
   var cls='bill', pill='', i;
   if(g.paid){ cls+=' paid'; pill='<span class="pill c">已繳</span>'; }
@@ -1683,11 +1697,12 @@ function billCard(g, compact){
     + '<div style="display:flex;align-items:center;gap:8px;cursor:pointer" '
     +   'onclick="billSheet(\''+jsq(g.key)+'\')" title="看這一期的消費明細">'
     + '<span style="font-size:13.5px;font-weight:700">'+esc(g.label)+'</span>'
+    + '<span class="mut2">'+esc(cycLabel(g.cyc))+' 期</span>'
     + (g.cards.length>1?'<span class="mut2">'+g.cards.length+' 張合併</span>':'')
     + '<span style="flex:1"></span>'+pill+'</div>'
     + '<div style="display:flex;align-items:flex-end;gap:10px;margin-top:8px;cursor:pointer" '
     +   'onclick="billSheet(\''+jsq(g.key)+'\')" title="看這一期的消費明細">'
-    + '<div><div class="mut2">應繳'+(hasOvrG(g)?'（帳單）':'（推估）')+'</div>'
+    + '<div><div class="mut2">'+esc(cycLabel(g.cyc))+' 應繳'+(hasOvrG(g)?'（帳單）':'（推估）')+'</div>'
     + '<div class="num" style="font-size:21px;font-weight:800">'+money(g.paid?g.paid.a:g.amt)+'</div></div>'
     + '<div style="flex:1"></div>'
     + '<div style="text-align:right"><div class="mut2">截止日</div>'
@@ -2632,6 +2647,10 @@ function clearOvr(){
 }
 function payNowG(gkey, amt){
   var g=gByKey(gkey); if(!g) return;
+  /* 這一期已經有繳款紀錄了就別再記一筆（重複是以前的老問題） */
+  var had = paidOfG(g);
+  if(had && !confirm('這一期（'+cycLabel(g.cyc)+'）已經記過一筆 '+fmt(had.a)
+      +' 的繳款了（'+had.d+'）。\n\n還要再記一筆嗎？')) return;
   openSheet('<h3>標記已繳</h3><div class="mut2">'+esc(g.label)
     + (g.cards.length>1?' · '+g.cards.length+' 張合併帳單':'')+' · 截止 '+ds(g.dueDate)+'</div>'
     + '<input type="hidden" id="p_g" value="'+esc(gkey)+'">'
@@ -2653,17 +2672,19 @@ function unpayG(gkey){
   var n=[], i, j, hit;
   for(i=0;i<S.pays.length;i++){
     var p=S.pays[i]; hit=false;
-    if(String(p.cyc)===g.cyc){ for(j=0;j<g.cards.length;j++) if(g.cards[j].id===p.cid) hit=true; }
+    if(sameCyc(p.cyc, g.cyc)){ for(j=0;j<g.cards.length;j++) if(g.cards[j].id===p.cid) hit=true; }
     if(hit) tomb(p.id); else n.push(p);
   }
   S.pays=n; save(); render(); toast('已取消');
 }
 /* 這一期的消費明細。帳單群組可能是同一家的好幾張卡合併，
    每張卡的結帳日可能不同，所以逐卡各自算自己的週期。 */
-function billTxns(g){
+/* ref 給哪一天，就算哪一期；不給就是現在這一期。
+   逐卡各算各的週期，因為同一家銀行的幾張卡結帳日不一定相同。 */
+function billTxns(g, ref){
   var out = [], i, j;
   for(i=0;i<g.cards.length;i++){
-    var c = g.cards[i], a = prevClose(c), b = lastClose(c);
+    var c = g.cards[i], a = prevClose(c, ref), b = lastClose(c, ref);
     for(j=0;j<S.txns.length;j++){
       var t = S.txns[j];
       if(t.cid !== c.id) continue;
@@ -2674,6 +2695,44 @@ function billTxns(g){
   out.sort(function(x, y){ return x.d < y.d ? 1 : (x.d > y.d ? -1 : 0); });
   return out;
 }
+/* 點繳款紀錄：看那一期繳了多少、那一期刷了什麼 */
+function paySheet(pid){
+  var p = null, i;
+  for(i=0;i<S.pays.length;i++) if(S.pays[i].id===pid) p = S.pays[i];
+  if(!p) return;
+  var c = byId(S.cards, p.cid), g = c ? groupOfCard(c.id) : null;
+  var ref = p.cyc ? pd(p.cyc) : null;
+  var ts = g ? billTxns(g, ref) : [], tot = 0;
+  for(i=0;i<ts.length;i++) tot += Number(ts[i].a) || 0;
+  var who = c ? (bankLabel(c.code) || c.name) : '（已刪卡）';
+  var h = '<h3>'+esc(who)+'　<span class="mut2" style="font-size:13px;font-weight:500">'
+        + esc(cycLabel(p.cyc))+' 期</span></h3>'
+    + '<div class="card" style="margin-top:12px"><div class="ln">'
+    + '<span>已繳</span><span class="num" style="font-size:18px;font-weight:800;color:var(--mint)">-'
+    + money(p.a)+'</span></div>'
+    + '<div class="ln" style="margin-top:6px"><span class="mut2">繳款日</span>'
+    + '<span class="num mut2">'+esc(p.d)+'</span></div>'
+    + (p.n ? '<div class="ln" style="margin-top:6px"><span class="mut2">備註</span>'
+             + '<span class="mut2">'+esc(p.n)+'</span></div>' : '')
+    + (ts.length ? '<div class="ln" style="margin-top:6px"><span class="mut2">那一期明細 '
+        + ts.length+' 筆合計</span><span class="num mut2">'+money(tot)+'</span></div>' : '')
+    + '</div>';
+  if(!g){
+    h += '<div class="empty" style="margin-top:12px"><p>這張卡已經刪掉了，<br>找不到對應的帳單。</p></div>';
+  }else if(!ts.length){
+    h += '<div class="empty" style="margin-top:12px"><p>這一期沒有消費明細。<br>'
+      +  '可能是還沒同步，或這期本來就沒刷。</p></div>';
+  }else{
+    h += '<div style="margin-top:12px">';
+    for(i=0;i<ts.length;i++) h += txRow(ts[i]);
+    h += '</div>';
+  }
+  h += '<div class="brow" style="margin-top:12px">'
+    +  '<button class="btn sm ghost" onclick="delPay(\''+jsq(pid)+'\')">刪掉這筆繳款</button>'
+    +  '<button class="btn sm ghost" onclick="closeSheet()">關閉</button></div>';
+  openSheet(h);
+}
+
 function billSheet(gkey){
   var g = gByKey(gkey); if(!g) return;
   var ts = billTxns(g), i, tot = 0;
