@@ -360,8 +360,9 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.10：顯示各銀行的紅利點數／里程（每期新增與結餘）
    v3.11：卡片詳情可直接停用／恢復（停卡了但想留紀錄時用）
    v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
+   v3.13：帳單頁不再列「沒帳單而且推估是 0」的銀行
    ================================================================== */
-var APP_VER = 'v3.12';
+var APP_VER = 'v3.13';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1628,11 +1629,20 @@ function txRow(t){
 /* ============ 視圖：帳單 ============ */
 function vBills(){
   if(!S.cards.length) return emptyState();
-  var i, h='', list=billGroups(), B={};
+  var i, h='', all=billGroups(), list=[], quiet=0, B={};
+  for(i=0;i<all.length;i++){
+    /* 這期沒收到帳單、推估也是 0 → 沒東西可看也沒東西要繳，收起來。
+       帳單真的出來、金額是 0 的要留著，那是用來確認「帳單收到了、這期不用繳」。 */
+    if(!all[i].amt && !hasOvrG(all[i]) && !all[i].paid){ quiet++; continue; }
+    list.push(all[i]);
+  }
   var unpaid=0, autoN=0;
   for(i=0;i<list.length;i++){
     if(!list[i].paid){ unpaid += list[i].amt; if(list[i].auto) autoN++; }
   }
+  if(!list.length)
+    return sec('', '<div class="empty"><p>這期還沒有任何帳單。<br>'
+      + (quiet ? quiet+' 家這期沒有消費紀錄。' : '按「下載↓」同步最新資料。') + '</p></div>');
 
   B.hero = sec('', '<div class="hero"><div class="lab">本期待繳合計</div>'
     +  '<div class="big num" style="color:var(--brass)"><small>NT$</small>'+money(unpaid)+'</div>'
@@ -1642,7 +1652,9 @@ function vBills(){
 
   h = '<div class="bgrid">';
   for(i=0;i<list.length;i++) h += billCard(list[i], false);
-  B.list = sec('各行帳單<span class="ct">'+list.length+' 家</span>', h + '</div>');
+  B.list = sec('各行帳單<span class="ct">'+list.length+' 家</span>', h + '</div>'
+    + (quiet ? '<div class="mut2" style="margin-top:8px">另有 '+quiet
+       +' 家這期沒有帳單也沒有消費，已收起來。</div>' : ''));
 
   var ps = S.pays.slice(0).sort(function(a,b){ return a.d<b.d?1:-1; });
   if(ps.length){
