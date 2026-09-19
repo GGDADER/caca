@@ -361,8 +361,9 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.11：卡片詳情可直接停用／恢復（停卡了但想留紀錄時用）
    v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
    v3.13：帳單頁不再列「沒帳單而且推估是 0」的銀行
+   v3.14：帳單卡片可以點開看那一期的消費明細；即將到期不再列 0 元帳單
    ================================================================== */
-var APP_VER = 'v3.13';
+var APP_VER = 'v3.14';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1264,10 +1265,10 @@ function upcoming(days){
   for(i=0;i<gs.length;i++){
     var g=gs[i];
     if(g.dd > days) continue;
-    /* 帳單已經出來、金額是 0（這期沒消費或已全額折抵）就沒東西要繳，不必提醒 */
-    if(!g.amt && hasOvrG(g)) continue;
+    /* 0 元就是沒東西要繳，不必提醒 —— 帳單就是 0、或這期根本沒消費，都一樣。
+       （帳單頁仍然看得到「帳單金額 0」那種，用來確認帳單收到了） */
+    if(!g.amt) continue;
     if(g.paid && g.dd < 0) continue;
-    if(!g.amt && !g.paid && g.dd < 0) continue;
     out.push(g);
   }
   return out;
@@ -1679,11 +1680,13 @@ function billCard(g, compact){
   else{ pill='<span class="pill b">剩 '+g.dd+' 天</span>'; }
 
   var h = '<div class="'+cls+'">'
-    + '<div style="display:flex;align-items:center;gap:8px">'
+    + '<div style="display:flex;align-items:center;gap:8px;cursor:pointer" '
+    +   'onclick="billSheet(\''+jsq(g.key)+'\')" title="看這一期的消費明細">'
     + '<span style="font-size:13.5px;font-weight:700">'+esc(g.label)+'</span>'
     + (g.cards.length>1?'<span class="mut2">'+g.cards.length+' 張合併</span>':'')
     + '<span style="flex:1"></span>'+pill+'</div>'
-    + '<div style="display:flex;align-items:flex-end;gap:10px;margin-top:8px">'
+    + '<div style="display:flex;align-items:flex-end;gap:10px;margin-top:8px;cursor:pointer" '
+    +   'onclick="billSheet(\''+jsq(g.key)+'\')" title="看這一期的消費明細">'
     + '<div><div class="mut2">應繳'+(hasOvrG(g)?'（帳單）':'（推估）')+'</div>'
     + '<div class="num" style="font-size:21px;font-weight:800">'+money(g.paid?g.paid.a:g.amt)+'</div></div>'
     + '<div style="flex:1"></div>'
@@ -2655,6 +2658,53 @@ function unpayG(gkey){
   }
   S.pays=n; save(); render(); toast('已取消');
 }
+/* 這一期的消費明細。帳單群組可能是同一家的好幾張卡合併，
+   每張卡的結帳日可能不同，所以逐卡各自算自己的週期。 */
+function billTxns(g){
+  var out = [], i, j;
+  for(i=0;i<g.cards.length;i++){
+    var c = g.cards[i], a = prevClose(c), b = lastClose(c);
+    for(j=0;j<S.txns.length;j++){
+      var t = S.txns[j];
+      if(t.cid !== c.id) continue;
+      var d = pd(t.d);
+      if(d > a && d <= b) out.push(t);
+    }
+  }
+  out.sort(function(x, y){ return x.d < y.d ? 1 : (x.d > y.d ? -1 : 0); });
+  return out;
+}
+function billSheet(gkey){
+  var g = gByKey(gkey); if(!g) return;
+  var ts = billTxns(g), i, tot = 0;
+  for(i=0;i<ts.length;i++) tot += Number(ts[i].a) || 0;
+  var h = '<h3>'+esc(g.label)+'　<span class="mut2" style="font-size:13px;font-weight:500">'
+        + ds(prevClose(g.primary)).slice(5)+' → '+ds(g.lc).slice(5)+'</span></h3>'
+    + '<div class="mut2">截止 '+ds(g.dueDate)+''
+    + (g.cards.length > 1 ? '　·　'+g.cards.length+' 張合併' : '')+'</div>'
+    + '<div class="card" style="margin-top:12px"><div class="ln">'
+    + '<span>應繳'+(hasOvrG(g) ? '（帳單）' : '（推估）')+'</span>'
+    + '<span class="num" style="font-size:18px;font-weight:800">'+money(g.amt)+'</span></div>'
+    + '<div class="ln" style="margin-top:6px"><span class="mut2">明細 '+ts.length+' 筆合計</span>'
+    + '<span class="num mut2">'+money(tot)+'</span></div>'
+    + (hasOvrG(g) && Math.round(tot) !== Math.round(g.amt)
+        ? '<div class="mut2" style="margin-top:8px;color:var(--amber)">差 '+money(g.amt - tot)
+          + '　帳單另有分期、循環利息、年費或外幣匯差時會有落差。</div>' : '')
+    + '</div>';
+  if(!ts.length){
+    h += '<div class="empty" style="margin-top:12px"><p>這一期還沒有消費明細。<br>'
+      +  '按「下載↓」同步，或用「記帳」手動補一筆。</p></div>';
+  }else{
+    h += '<div style="margin-top:12px">';
+    for(i=0;i<ts.length;i++) h += txRow(ts[i]);
+    h += '</div>';
+  }
+  h += '<div class="brow" style="margin-top:12px">'
+    +  '<button class="btn sm ghost" onclick="ovrSheetG(\''+jsq(gkey)+'\')">修改帳單金額</button>'
+    +  '<button class="btn sm ghost" onclick="closeSheet()">關閉</button></div>';
+  openSheet(h);
+}
+
 function ovrSheetG(gkey){
   var g=gByKey(gkey); if(!g) return;
   openSheet('<h3>帳單實際應繳</h3>'
