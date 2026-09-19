@@ -359,8 +359,9 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.9：認得簽帳金融卡（直接扣款，不佔額度、沒有帳單）
    v3.10：顯示各銀行的紅利點數／里程（每期新增與結餘）
    v3.11：卡片詳情可直接停用／恢復（停卡了但想留紀錄時用）
+   v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
    ================================================================== */
-var APP_VER = 'v3.11';
+var APP_VER = 'v3.12';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1322,7 +1323,8 @@ function cardListHTML(){
     cs.sort(function(a,b){ return (a.off?1:0)-(b.off?1:0) || (Number(b.limit)||0)-(Number(a.limit)||0); });
     h = '<div class="cgrid">';
     for(i=0;i<cs.length;i++) h += cardRow(cs[i], i);
-    return h + '</div>';
+    /* 不分組時看不到銀行標頭，就把各家點數收在列表下方一塊 */
+    return h + '</div>' + ptSummary(cs);
   }
 
   /* 依銀行分組：每家一個標頭，附該行卡數與額度合計 */
@@ -1343,7 +1345,12 @@ function cardListHTML(){
   for(i=0;i<keys.length;i++){
     var g=map[keys[i]], gp = g.limit>0 ? g.used/g.limit*100 : 0;
     var body = '<div class="ghead legend"><span>'+g.list.length+' 張 · 額度 <b class="num">'+wan(g.limit)+'</b></span>'
-      +  '<span style="color:'+pctColor(gp)+'">可用 '+wan(g.limit-g.used)+'</span></div><div class="cgrid">';
+      +  '<span style="color:'+pctColor(gp)+'">可用 '+wan(g.limit-g.used)+'</span></div>';
+    /* 點數是整家銀行共用的，所以放在銀行標頭下、卡片之上 */
+    var gpts = ptLatest(keys[i]), gk;
+    for(gk=0;gk<gpts.length;gk++)
+      body += '<div class="ln" style="margin:'+(gk?'3px':'2px')+' 2px 7px">'+ptLine(gpts[gk])+'</div>';
+    body += '<div class="cgrid">';
     g.list.sort(function(a,b){ return (a.off?1:0)-(b.off?1:0) || (Number(b.limit)||0)-(Number(a.limit)||0); });
     for(j=0;j<g.list.length;j++) body += cardRow(g.list[j], j);
     h += sec(esc(g.label), body + '</div>');
@@ -1946,6 +1953,23 @@ function ptBlock(){
   h += '</table></div><div class="mut2" style="margin-top:8px">'
     + '點一列看每期變化。標 <span style="color:var(--amber)">?</span> 的表示「上期＋新增＋調整－使用」對不上結餘，數字僅供參考。</div>';
   return h;
+}
+
+/* 不分組的卡片列表下方：有卡片的銀行，各列一行點數 */
+function ptSummary(cs){
+  if(!S.points.length) return '';
+  var seen={}, rows='', i, k;
+  for(i=0;i<cs.length;i++){
+    var bc=normCode(cs[i].code);
+    if(!bc || seen[bc]) continue;
+    seen[bc]=1;
+    var ps=ptLatest(bc);
+    for(k=0;k<ps.length;k++)
+      rows += '<div class="ln" style="margin-bottom:5px"><span>'+esc(bankLabel(bc))+'　</span>'
+        +  '<span style="flex:1"></span>'+ptLine(ps[k])+'</div>';
+  }
+  if(!rows) return '';
+  return sec('紅利點數 / 里程', '<div class="card">'+rows+'</div>');
 }
 
 /* 停卡了但消費紀錄要留著：停用比刪除安全，額度與帳單都不再計入。 */
