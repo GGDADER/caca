@@ -362,6 +362,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
    v3.13：帳單頁不再列「沒帳單而且推估是 0」的銀行
    v3.14：帳單卡片可以點開看那一期的消費明細；即將到期不再列 0 元帳單
+   v3.18：看得到每次自動匯入的結果（設定頁）；上次失敗或太久沒匯入時總覽會提醒
    v3.17：自動扣款全站同一個定義；去繳費直接開各家繳費頁；收起來的銀行列出名字；
           拿掉匯出行事曆
    v3.16：已繳的帳單不要把「已繳金額」標成「應繳」；pd() 吃得下 ISO 日期字串；
@@ -369,7 +370,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.15：帳單標出期別；繳款紀錄改顯示銀行、可點開看那期明細；
           修好「結帳日一改，已繳的帳單又變回未繳」導致的重複繳款
    ================================================================== */
-var APP_VER = 'v3.17';
+var APP_VER = 'v3.18';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -467,7 +468,7 @@ var BANK_ALIAS = [
 var PALETTE = ['#d4a24c','#4fd1a5','#6ea8fe','#f2607a','#b98cf0','#f0b429','#5ec8c8','#e08b5a','#9aa8bd','#7fd06b'];
 
 var S = {
-  cards: [], txns: [], pays: [], del: [], ovr: {}, catRules: [], points: [],
+  cards: [], txns: [], pays: [], del: [], ovr: {}, catRules: [], points: [], runs: [],
   cfg: {api:'', key:'', privacy:false, remindDays:3, warnPct:80, rev:0, groupBank:false, acctLocal:true,
         mig20:0, adjMonths:3, pay:{code:'', acct:'', pid:''}}
 };
@@ -848,12 +849,14 @@ function load(){
       if(o.ovr)   S.ovr=o.ovr;
       if(o.catRules) S.catRules=o.catRules;
       if(o.points)   S.points=o.points;
+      if(o.runs)     S.runs=o.runs;
       if(o.cfg){ for(var k in o.cfg){ if(o.cfg.hasOwnProperty(k)) S.cfg[k]=o.cfg[k]; } }
     }
   }catch(e){ console.log('load fail', e); }
   if(!S.cfg.pay) S.cfg.pay={code:'',acct:'',pid:''};
   if(Object.prototype.toString.call(S.catRules)!=='[object Array]') S.catRules=[];
   if(Object.prototype.toString.call(S.points)!=='[object Array]') S.points=[];
+  if(Object.prototype.toString.call(S.runs)!=='[object Array]') S.runs=[];
   var mg=migrate20();
   var gm=stripGmail();
   if(gm) save();
@@ -1168,6 +1171,40 @@ function keepChips(){
 }
 
 /* ============ 視圖：總覽 ============ */
+/* ============ 自動匯入紀錄 ============ */
+/* runs 由後端依時間新→舊排好；欄位都是字串（試算表存成純文字） */
+var RUN_STALE_DAYS = 8;      // 每週跑一次，超過 8 天沒跑就提醒
+function lastRun(){ return S.runs && S.runs.length ? S.runs[0] : null; }
+function runAge(r){
+  var t = String(r && r.t || ''), d = pd(t.slice(0,10));
+  return isNaN(d.getTime()) ? 999 : dayDiff(d, today());
+}
+function runBad(r){ return !!(r && (String(r.crash||'') || Number(r.upfail) > 0)); }
+function runLine(r){
+  var ok = !runBad(r);
+  return '<div class="ln" style="margin-bottom:4px"><span><b style="color:'
+    + (ok ? 'var(--mint)' : 'var(--rose)')+'">'+(ok ? '✓' : '✗')+'</b> '
+    + esc(String(r.t||''))+'</span><span class="num mut2">'
+    + (String(r.crash||'') ? '中途出錯'
+       : (Number(r.bills)||0)+' 份帳單 · 新增 '+(Number(r.added)||0)+' 筆'
+         + (Number(r.upfail) ? ' · <span style="color:var(--rose)">'+Number(r.upfail)+' 份沒送成功</span>' : ''))
+    + '</span></div>'
+    + (String(r.crash||'') ? '<div class="mut2" style="margin:-2px 0 6px 18px;color:var(--rose)">'+esc(String(r.crash))+'</div>' : '')
+    + (String(r.note||'') ? '<div class="mut2" style="margin:-2px 0 6px 18px">'+esc(String(r.note))+'</div>' : '');
+}
+/* 總覽上方的提醒：只有出事或太久沒跑才出現，平常不佔位置 */
+function runAlert(){
+  var r = lastRun(); if(!r) return '';
+  var age = runAge(r), msg = '';
+  if(String(r.crash||'')) msg = '上次自動匯入（'+esc(String(r.t))+'）中途出錯，帳單可能沒更新。';
+  else if(Number(r.upfail) > 0) msg = '上次自動匯入（'+esc(String(r.t))+'）有 '+Number(r.upfail)+' 份帳單沒送成功。';
+  else if(age > RUN_STALE_DAYS) msg = '已經 '+age+' 天沒有自動匯入帳單了（上次是 '+esc(String(r.t))+'）。';
+  if(!msg) return '';
+  return sec('', '<div class="card" style="border-color:var(--rose)"><div style="color:var(--rose);font-weight:700">'
+    + msg+'</div><div class="mut2" style="margin-top:6px">電腦上 logs 資料夾裡的「最近一次.txt」有完整紀錄。'
+    + '<a href="#" onclick="go(\'st\');return false">看匯入紀錄 →</a></div></div>');
+}
+
 function vOverview(){
   if(!S.cards.length) return emptyState();
   var T = totals(), cs = activeCards(), i, B = {}, h;
@@ -1246,7 +1283,8 @@ function vOverview(){
     }
     B.adj = sec('可申請調額', h);
   }
-  return lay(B, ['hero','bank','up','cat','adj'], [['hero','up','cat'],['bank','adj']], 'c75');
+  B.run = runAlert();
+  return lay(B, ['run','hero','bank','up','cat','adj'], [['hero','up','cat'],['bank','adj']], 'c75', ['run']);
 }
 function emptyState(){
   return '<div class="empty"><div class="g">▤</div>'
@@ -2047,6 +2085,14 @@ function vSettings(){
     + '<div class="mut2" style="margin-top:5px">一般銀行間隔 3 個月才能再次申請調額。改這個數字會重算所有卡片的下次可申請日。</div>'
     + '</div>');
 
+  B.runs = sec('自動匯入紀錄', '<div class="card">'
+    + (S.runs.length
+        ? (function(){ var o='', k; for(k=0;k<S.runs.length && k<6;k++) o += runLine(S.runs[k]); return o; })()
+          + '<div class="mut2" style="margin-top:6px">電腦每次跑完帳單匯入都會回報到這裡。'
+          + '完整紀錄在電腦上程式旁邊的 logs 資料夾。</div>'
+        : '<div class="mut2">還沒有紀錄。電腦上的帳單匯入更新到 v1.19 之後，每次跑完都會回報到這裡。</div>')
+    + '</div>');
+
   B.sync = sec('雲端同步（選配）', '<div class="card">'
     + '<label for="s_api">Apps Script 網址</label><input id="s_api" placeholder="https://script.google.com/macros/s/.../exec" value="'+esc(cfg.api)+'">'
     + '<label for="s_key">存取密鑰</label><input id="s_key" placeholder="與 Code.gs 的 API_KEY 相同" value="'+esc(cfg.key)+'">'
@@ -2097,8 +2143,8 @@ function vSettings(){
     + '部分銀行為「48＋正卡人身分證字號」。單日上限 10 萬、單月 20 萬，部分銀行每筆收 10 元手續費。</div>'
     + '<div class="mut2" style="text-align:center;margin:24px 0 6px;color:var(--dim2)">卡務 '+APP_VER+'</div>';
   B.codes = sec('e-Bill 機構代號', h);
-  return lay(B, ['remind','sync','rules','pay','maint','data','codes'],
-             [['sync','remind','pay'],['rules','maint','data','codes']], 'c66');
+  return lay(B, ['runs','remind','sync','rules','pay','maint','data','codes'],
+             [['runs','sync','remind','pay'],['rules','maint','data','codes']], 'c66');
 }
 function rulesBlock(){
   var rs=S.catRules||[], act=[], pend=0, i;
@@ -3123,6 +3169,7 @@ function pullCloud(){
       /* 分類規則：雲端為準，本機還沒同步的修改保留下來再送一次 */
       if(j.data.catRules) mergeRules(j.data.catRules);
       S.points = j.data.points || [];
+      S.runs = j.data.runs || [];
       rulesChanged();
       for(i=0;i<S.cards.length;i++){
         if(!S.cards[i].acct && keep[S.cards[i].id]) S.cards[i].acct=keep[S.cards[i].id];
