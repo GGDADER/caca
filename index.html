@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -362,6 +363,8 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
    v3.13：帳單頁不再列「沒帳單而且推估是 0」的銀行
    v3.14：帳單卡片可以點開看那一期的消費明細；即將到期不再列 0 元帳單
+   v3.19：電腦與手機自動同步：有改動就上傳（只送改了的），打開或切回畫面就抓最新；
+          拿掉整份覆蓋的「上傳 ↑」，改成「立即同步」；清除資料只清這台
    v3.18：看得到每次自動匯入的結果（設定頁）；上次失敗或太久沒匯入時總覽會提醒
    v3.17：自動扣款全站同一個定義；去繳費直接開各家繳費頁；收起來的銀行列出名字；
           拿掉匯出行事曆
@@ -370,7 +373,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.15：帳單標出期別；繳款紀錄改顯示銀行、可點開看那期明細；
           修好「結帳日一改，已繳的帳單又變回未繳」導致的重複繳款
    ================================================================== */
-var APP_VER = 'v3.18';
+var APP_VER = 'v3.19';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -469,8 +472,9 @@ var PALETTE = ['#d4a24c','#4fd1a5','#6ea8fe','#f2607a','#b98cf0','#f0b429','#5ec
 
 var S = {
   cards: [], txns: [], pays: [], del: [], ovr: {}, catRules: [], points: [], runs: [],
+  sync: {rev:null, base:null, at:0},     /* 自動同步：雲端資料版本、上次同步時的樣子 */
   cfg: {api:'', key:'', privacy:false, remindDays:3, warnPct:80, rev:0, groupBank:false, acctLocal:true,
-        mig20:0, adjMonths:3, pay:{code:'', acct:'', pid:''}}
+        mig20:0, adjMonths:3, autoSync:true, pay:{code:'', acct:'', pid:''}}
 };
 var TAB = 'ov';
 var DRAFT = {cid:'', cat:'食', d:''};
@@ -850,6 +854,7 @@ function load(){
       if(o.catRules) S.catRules=o.catRules;
       if(o.points)   S.points=o.points;
       if(o.runs)     S.runs=o.runs;
+      if(o.sync && typeof o.sync==='object') S.sync=o.sync;
       if(o.cfg){ for(var k in o.cfg){ if(o.cfg.hasOwnProperty(k)) S.cfg[k]=o.cfg[k]; } }
     }
   }catch(e){ console.log('load fail', e); }
@@ -857,6 +862,7 @@ function load(){
   if(Object.prototype.toString.call(S.catRules)!=='[object Array]') S.catRules=[];
   if(Object.prototype.toString.call(S.points)!=='[object Array]') S.points=[];
   if(Object.prototype.toString.call(S.runs)!=='[object Array]') S.runs=[];
+  if(!S.sync || typeof S.sync!=='object') S.sync={rev:null, base:null, at:0};
   var mg=migrate20();
   var gm=stripGmail();
   if(gm) save();
@@ -900,6 +906,7 @@ function save(){
   S.cfg.rev = (S.cfg.rev||0) + 1;
   try{ localStorage.setItem(KEY, JSON.stringify(S)); }
   catch(e){ toast('儲存失敗：瀏覽器空間不足'); }
+  if(typeof SYNC !== 'undefined' && SYNC && !SYNC.mute) syncSoon();
 }
 
 /* ============ 週期計算 ============ */
@@ -1117,7 +1124,8 @@ function render(){
   if(TAB==='st')  h = vSettings();
   $('app').innerHTML = h;
   $('btnPriv').className = 'ico' + (S.cfg.privacy?' on':'');
-  $('hsub').textContent = S.cards.length ? (activeCards().length + ' 張卡 · ' + APP_VER) : APP_VER;
+  $('hsub').innerHTML = esc(S.cards.length ? (activeCards().length + ' 張卡 · ' + APP_VER) : APP_VER)
+    + '<span id="hsync">' + syncBadge() + '</span>';
   $('hpg').textContent = TAB_NAME[TAB] || '';
   document.title = '卡務 · ' + (TAB_NAME[TAB] || '信用卡管理');
   keepChips();
@@ -1512,7 +1520,7 @@ function recsHTML(){
   var D = recsData();
   if(!D.all.length){
     return '<div class="eyebrow">消費紀錄</div>'
-      + '<div class="card empty"><p>還沒有消費紀錄。<br>在電腦跑 statement_reader.py 匯入帳單，<br>再到設定頁按「下載 ↓」。</p></div>';
+      + '<div class="card empty"><p>還沒有消費紀錄。<br>在電腦跑 statement_reader.py 匯入帳單，<br>設好雲端之後會自動同步過來。</p></div>';
   }
   return '<div class="eyebrow">消費紀錄<span class="ct">'+D.all.length+' 筆</span></div>'
     + '<div class="fbar"><div class="seg">'
@@ -1705,7 +1713,7 @@ function vBills(){
   }
   if(!list.length)
     return sec('', '<div class="empty"><p>這期還沒有任何帳單。<br>'
-      + (quiet ? quiet+' 家這期沒有消費紀錄。' : '按「下載↓」同步最新資料。') + '</p></div>');
+      + (quiet ? quiet+' 家這期沒有消費紀錄。' : '匯入後會自動同步過來。') + '</p></div>');
 
   B.hero = sec('', '<div class="hero"><div class="lab">本期待繳合計</div>'
     +  '<div class="big num" style="color:var(--brass)"><small>NT$</small>'+money(unpaid)+'</div>'
@@ -2093,7 +2101,8 @@ function vSettings(){
         : '<div class="mut2">還沒有紀錄。電腦上的帳單匯入更新到 v1.19 之後，每次跑完都會回報到這裡。</div>')
     + '</div>');
 
-  B.sync = sec('雲端同步（選配）', '<div class="card">'
+  var pend = (syncable() && S.sync && S.sync.base) ? syncDiff().n : 0;
+  B.sync = sec('雲端同步', '<div class="card">'
     + '<label for="s_api">Apps Script 網址</label><input id="s_api" placeholder="https://script.google.com/macros/s/.../exec" value="'+esc(cfg.api)+'">'
     + '<label for="s_key">存取密鑰</label><input id="s_key" placeholder="與 Code.gs 的 API_KEY 相同" value="'+esc(cfg.key)+'">'
     + '<label class="chk"><input type="checkbox" id="s_acct" '
@@ -2102,10 +2111,17 @@ function vSettings(){
     + '<div class="mut2" style="margin:6px 0 0;line-height:1.75">涵蓋 <b>銷帳編號</b>、<b>網銀代號</b>、<b>密碼提示</b>。'
     + '<span id="s_acct_h">'+acctHintText()+'</span></div>'
     + '<button class="btn sm ghost" onclick="saveSync()">儲存設定</button>'
+    + '<label class="chk" style="margin-top:12px"><input type="checkbox" id="s_auto" '
+    + (S.cfg.autoSync!==false?'checked':'') + ' onchange="setAutoSync(this.checked)">'
+    + '<span>自動同步（建議開著）</span></label>'
+    + '<div class="mut2" style="margin:4px 0 0;line-height:1.75">有改動就上傳、打開或切回卡務時抓最新，電腦跟手機看到的會是同一份。</div>'
+    + '<div class="mut2" id="syncst" style="margin-top:8px;line-height:1.7">'+syncStatusHTML()+'</div>'
+    + (pend ? '<div class="mut2" style="margin-top:2px">這台有 <b class="num" style="color:var(--brass)">'+pend+'</b> 筆改動還沒送出。</div>' : '')
     + '<div class="brow" style="margin-top:8px">'
-    + '<button class="btn sm" onclick="pushCloud()">上傳 ↑</button>'
-    + '<button class="btn sm ghost" onclick="pullCloud()">下載 ↓</button></div>'
-    + '<div class="mut2" style="margin-top:9px;line-height:1.7">電腦上的 statement_reader.py 把電子帳單寫進試算表，這裡按「下載 ↓」就拿得到。'
+    + '<button class="btn sm" onclick="syncRun(true)">立即同步</button>'
+    + '<button class="btn sm ghost" onclick="pullCloud()">從雲端重新下載</button></div>'
+    + '<div class="mut2" style="margin-top:9px;line-height:1.7">電腦上的 statement_reader.py 把電子帳單寫進試算表，卡務會自動同步過來。'
+    + '「從雲端重新下載」會丟掉這台還沒送出的改動，只在兩邊對不起來時用。'
     + 'Telegram 繳款提醒也要設定這裡才會有。沒設定的話，資料只存在這台裝置。</div></div>');
 
   B.rules = rulesBlock();
@@ -2559,7 +2575,7 @@ function txSheet(id){
     /* 手動記的帳：直接改這一筆 */
     h += '<div class="chips">'+catChips(k, 'xManual')+'</div>'
       +  '<input type="hidden" id="x_id" value="'+esc(id)+'">'
-      +  '<div class="mut2" style="margin-top:8px">手動記的帳，點一下就改。要同步到其他裝置請到設定頁按「上傳 ↑」。</div>';
+      +  '<div class="mut2" style="margin-top:8px">手動記的帳，點一下就改。</div>';
   }else{
     var inf=catInfo(t.m, t.kind);
     var why = inf[1]==='u' ? '依你的規則「'+esc(inf[2])+'」'
@@ -2838,7 +2854,7 @@ function billSheet(gkey){
     + '</div>';
   if(!ts.length){
     h += '<div class="empty" style="margin-top:12px"><p>這一期還沒有消費明細。<br>'
-      +  '按「下載↓」同步，或用「記帳」手動補一筆。</p></div>';
+      +  '匯入後會自動同步，或用「記帳」手動補一筆。</p></div>';
   }else{
     h += '<div style="margin-top:12px">';
     for(i=0;i<ts.length;i++) h += txRow(ts[i]);
@@ -3002,7 +3018,9 @@ function dl(blob, fname){
 
 /* ============ 備份 / 同步 ============ */
 function exportJSON(){
-  var blob = new Blob([JSON.stringify(S, null, 1)], {type:'application/json'});
+  var o = {}, k;
+  for(k in S){ if(S.hasOwnProperty(k) && k !== 'sync') o[k] = S[k]; }    /* 同步基準不用備份 */
+  var blob = new Blob([JSON.stringify(o, null, 1)], {type:'application/json'});
   var fname = 'carddesk-'+ds(today())+'.json';
   if(navigator.canShare && navigator.share){
     try{
@@ -3022,6 +3040,7 @@ function doImport(){
   try{
     var o=JSON.parse($('imp').value);
     if(!o.cards) throw new Error('格式不對');
+    if(syncOn() && !confirm('自動同步開著：匯入後雲端也會改成跟這份備份一樣，備份裡沒有的會從雲端刪掉。確定？')) return;
     S.cards=o.cards||[]; S.txns=o.txns||[]; S.pays=o.pays||[];
     if(Object.prototype.toString.call(o.catRules)==='[object Array]'){ S.catRules=o.catRules; rulesChanged(); }
     if(o.cfg){ for(var k in o.cfg){ if(o.cfg.hasOwnProperty(k) && k!=='api' && k!=='key') S.cfg[k]=o.cfg[k]; } }
@@ -3030,6 +3049,15 @@ function doImport(){
   }catch(e){ toast('讀不懂這段 JSON'); }
 }
 function wipe(){
+  /* 有設雲端：只清這台，雲端不動，接著重新下載（當成「這台重來」）。
+     沒設雲端：跟以前一樣整個清掉。 */
+  if(syncable()){
+    if(!confirm('清除這台裝置的資料？\n雲端的資料不會刪，接著會從雲端重新下載。')) return;
+    S.cards=[]; S.txns=[]; S.pays=[]; S.ovr={}; S.points=[]; S.runs=[];
+    S.sync={rev:null, base:null, at:0};
+    save(); go('ov'); toast('已清除，正在從雲端重新下載');
+    return;
+  }
   if(!confirm('清除所有卡片與紀錄？無法復原。')) return;
   if(!confirm('真的確定？建議先「匯出備份」。')) return;
   var i;
@@ -3081,7 +3109,7 @@ function redetectAll(){
 function acctHintText(){
   return S.cfg.acctLocal
     ? '目前<b style="color:var(--mint)">不上傳</b>，換手機時這三欄要重新輸入。'
-    : '目前<b style="color:var(--brass)">會上傳</b>到你自己的 Google 試算表，換手機下載就有。'
+    : '目前<b style="color:var(--brass)">會上傳</b>到你自己的 Google 試算表，換手機同步就有。'
       + '存取靠網址加密鑰保護，所以<b>只填自己看得懂的代號，不要填完整卡號或真正的密碼</b>。';
 }
 function savePay2(){
@@ -3091,15 +3119,24 @@ function savePay2(){
   save(); toast('付款帳戶已存在本機');
 }
 function saveSync(){
-  S.cfg.api = $('s_api').value.trim();
-  S.cfg.key = $('s_key').value.trim();
+  var api = $('s_api').value.trim(), key = $('s_key').value.trim();
+  var changed = (api !== S.cfg.api || key !== S.cfg.key);
+  S.cfg.api = api; S.cfg.key = key;
+  if(changed) S.sync = {rev:null, base:null, at:0};     /* 換了雲端 → 第一次同步重來 */
   save(); toast('已儲存');
   flushRules();
+  if(changed) syncSoon(300);
+}
+function setAutoSync(on){
+  S.cfg.autoSync = !!on;
+  save();
+  if(on) syncSoon(200);
+  render();
 }
 /* Apps Script 忙碌時會回 HTML 錯誤頁、逾時，或在轉址時弄丟 POST 內容，自動重試 */
 function gasFetch(opt, cb, label, n){
   n = n || 1;
-  var url = opt.url, init = opt.init || {};
+  var url = opt.url, init = opt.init || {}, tries = opt.tries || 5;
   fetch(url, init)
     .then(function(r){ return r.text(); })
     .then(function(txt){
@@ -3113,8 +3150,8 @@ function gasFetch(opt, cb, label, n){
       throw new Error(t.charAt(0)==='<' ? 'Google 回了錯誤頁' : '非預期回應');
     })
     .catch(function(e){
-      if(n < 5){
-        toast(label+'重試中…（'+(n+1)+'/5）');
+      if(n < tries){
+        if(!opt.quiet) toast(label+'重試中…（'+(n+1)+'/'+tries+'）');
         setTimeout(function(){ gasFetch(opt, cb, label, n+1); }, 2500*n*n);
       }else{
         cb({ok:false, err:(e && e.message) || '連線失敗'});
@@ -3122,34 +3159,17 @@ function gasFetch(opt, cb, label, n){
     });
 }
 /* POST 一律把密鑰也掛在網址上：轉址後 POST 內容會消失，網址上的密鑰還在 */
-function gasPost(body, cb, label){
+function gasPost(body, cb, label, quiet){
   var api = S.cfg.api;
   body.key = S.cfg.key;
   gasFetch({url: api + (api.indexOf('?')<0?'?':'&') + 'key=' + encodeURIComponent(S.cfg.key), init:{
     method:'POST', redirect:'follow',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
     body: JSON.stringify(body)
-  }}, cb, label);
+  }, quiet:!!quiet, tries:(quiet ? 3 : 5)}, cb, label);
 }
-function pushCloud(){
-  if(!S.cfg.api){ toast('請先填 Apps Script 網址'); return; }
-  /* 銷帳編號多為完整卡號，預設剝除後才上傳 */
-  var outCards=[], i, k;
-  for(i=0;i<S.cards.length;i++){
-    var o={}, src=S.cards[i];
-    for(k in src){ if(src.hasOwnProperty(k)) o[k]=src[k]; }
-    /* 銷帳編號、網銀代號、密碼提示：由設定頁的開關決定要不要上傳 */
-    if(S.cfg.acctLocal){ o.acct=''; o.nbId=''; o.nbHint=''; }
-    outCards.push(o);
-  }
-  toast('上傳中…');
-  gasPost({action:'push', del:S.del||[],
-    data:{cards:outCards, txns:S.txns, pays:S.pays, ovr:S.ovr||{},
-          cfg:{remindDays:S.cfg.remindDays, warnPct:S.cfg.warnPct}}},   /* pay 與 api key 永不上傳 */
-  function(j){
-    if(j.ok){ S.del=[]; save(); toast('已上傳 '+(j.n||'')+' 筆'); flushRules(); }
-    else toast('上傳失敗：'+(j.err||'?'));
-  }, '上傳');
+function gasGetUrl(action){
+  return S.cfg.api + (S.cfg.api.indexOf('?')<0?'?':'&') + 'action=' + action + '&key=' + encodeURIComponent(S.cfg.key);
 }
 function pullCloud(){
   if(!S.cfg.api){ toast('請先填 Apps Script 網址'); return; }
@@ -3179,16 +3199,331 @@ function pullCloud(){
       /* 雲端可能是舊格式、且試算表會吃掉前導零，下載後一定要重跑正規化 */
       migrate20();
       var gm=stripGmail();
-      save(); go('ov');
+      /* 以雲端為準重新開始同步（舊版後端沒有資料版本，就只下載） */
+      S.sync = (j.rev === undefined) ? {rev:null, base:null, at:0} : {rev:j.rev, base:snapBase(), at:Date.now()};
+      SYNC.mute = true; save(); SYNC.mute = false;
+      go('ov');
       toast('已下載 '+S.cards.length+' 張卡 / '+S.txns.length+' 筆'+(gm?'（略過 '+gm+' 筆 Gmail 通知記帳）':''));
       flushRules();
    }, '下載');
+}
+
+/* ============ 自動同步（v3.19）============
+   電腦與手機共用同一份雲端資料：
+   · 有改動 → 2.5 秒後自動上傳，只送跟上次同步時不一樣的那幾筆（卡片只送改了的欄位）
+   · 打開、切回畫面、每 5 分鐘 → 先問雲端的資料版本（很便宜），有變才下載
+   · 上傳途中又改了東西 → 那些改動留著，下一輪再送
+   · 第一次同步 → 以雲端為準，這台多出來的（新卡、手動記帳、繳款紀錄）補上傳
+   刪除靠「上次同步時有、現在沒有」判斷，後端會留墓碑，別台送回舊資料也不會復活。 */
+var SYNC = {busy:false, timer:null, again:false, mute:false, checked:-1e9, state:'', err:'', fails:0, warned:false};
+var SENS_KEYS = ['acct', 'nbId', 'nbHint'];
+
+function syncable(){ return !!(S.cfg.api && S.cfg.key); }
+function syncOn(){ return syncable() && S.cfg.autoSync !== false; }
+function nowMs(){ return (window.performance && performance.now) ? performance.now() : 0; }
+/* 固定順序的 JSON：同樣的資料一定得到同樣的字串 */
+function stableStr(v){
+  if(v === null || v === undefined) return 'null';
+  if(Object.prototype.toString.call(v) === '[object Array]'){
+    var a = [], i;
+    for(i=0;i<v.length;i++) a.push(stableStr(v[i]));
+    return '[' + a.join(',') + ']';
+  }
+  if(typeof v === 'object'){
+    var ks = [], k, o = [], j;
+    for(k in v){ if(v.hasOwnProperty(k) && v[k] !== undefined) ks.push(k); }
+    ks.sort();
+    for(j=0;j<ks.length;j++) o.push(JSON.stringify(ks[j]) + ':' + stableStr(v[ks[j]]));
+    return '{' + o.join(',') + '}';
+  }
+  return JSON.stringify(v);
+}
+function hstr(s){                        /* FNV-1a 32 位元雜湊 */
+  var h = 0x811c9dc5, i;
+  for(i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = (h + ((h<<1) + (h<<4) + (h<<7) + (h<<8) + (h<<24))) >>> 0; }
+  return h.toString(36);
+}
+/* 「敏感欄位只留本機」時，這三欄不上傳，改了也不算改動 */
+function cardForSync(c){
+  var o = {}, k, i;
+  for(k in c){ if(c.hasOwnProperty(k)) o[k] = c[k]; }
+  if(S.cfg.acctLocal){ for(i=0;i<SENS_KEYS.length;i++) delete o[SENS_KEYS[i]]; }
+  return o;
+}
+function snapBase(){
+  var b = {c:{}, t:{}, p:{}, o:{}}, i, k, ov = S.ovr || {};
+  for(i=0;i<S.cards.length;i++) b.c[S.cards[i].id] = stableStr(cardForSync(S.cards[i]));
+  for(i=0;i<S.txns.length;i++) b.t[S.txns[i].id] = hstr(stableStr(S.txns[i]));
+  for(i=0;i<S.pays.length;i++) b.p[S.pays[i].id] = hstr(stableStr(S.pays[i]));
+  for(k in ov){ if(ov.hasOwnProperty(k)) b.o[k] = Number(ov[k]) || 0; }
+  return b;
+}
+function diffList(list, base, outUp, outDel){
+  var n = 0, seen = {}, i, k, r;
+  for(i=0;i<list.length;i++){
+    r = list[i]; seen[r.id] = 1;
+    if(base[r.id] !== hstr(stableStr(r))){ outUp.push(r); n++; }
+  }
+  for(k in base){ if(base.hasOwnProperty(k) && !seen[k]){ outDel.push(k); n++; } }
+  return n;
+}
+/* 跟上次同步時比，這台改了什麼 */
+function syncDiff(){
+  var B = S.sync.base, up = {cards:[], cardPatch:[], txns:[], pays:[], ovrSet:{}, ovrDel:[], del:[], n:0};
+  var seen = {}, i, k, c, cs, bs, ov = S.ovr || {};
+  for(i=0;i<S.cards.length;i++){
+    c = cardForSync(S.cards[i]); cs = stableStr(c); seen[c.id] = 1; bs = B.c[c.id];
+    if(bs === undefined){ up.cards.push(c); up.n++; continue; }
+    if(bs === cs) continue;
+    var old = JSON.parse(bs), set = {}, any = false;
+    for(k in c){ if(c.hasOwnProperty(k) && stableStr(c[k]) !== stableStr(old[k])){ set[k] = c[k]; any = true; } }
+    for(k in old){ if(old.hasOwnProperty(k) && !c.hasOwnProperty(k)){ set[k] = null; any = true; } }
+    if(any){ up.cardPatch.push({id:c.id, set:set}); up.n++; }
+  }
+  for(k in B.c){ if(B.c.hasOwnProperty(k) && !seen[k]){ up.del.push(k); up.n++; } }
+  up.n += diffList(S.txns, B.t, up.txns, up.del);
+  up.n += diffList(S.pays, B.p, up.pays, up.del);
+  for(k in ov){ if(ov.hasOwnProperty(k) && B.o[k] !== (Number(ov[k]) || 0)){ up.ovrSet[k] = Number(ov[k]) || 0; up.n++; } }
+  for(k in B.o){ if(B.o.hasOwnProperty(k) && !ov.hasOwnProperty(k)){ up.ovrDel.push(k); up.n++; } }
+  return up;
+}
+function syncSoon(ms){
+  if(!syncOn() || SYNC.state === 'old') return;       /* 後端太舊：只在按「立即同步」時再試 */
+  clearTimeout(SYNC.timer);
+  SYNC.timer = setTimeout(function(){ syncRun(false); }, ms == null ? 2500 : ms);
+}
+function syncRun(manual){
+  if(!syncable()){ if(manual) toast('請先填 Apps Script 網址與密鑰'); return; }
+  if(SYNC.busy){ SYNC.again = true; if(manual) toast('同步中…'); return; }
+  if(!S.sync || !S.sync.base){ syncFirst(manual); return; }
+  var up = syncDiff();
+  if(!up.n && !manual){ syncCheck(); return; }
+  syncSend(up, manual);
+}
+/* 沒有本機改動：只問雲端版本有沒有變（GET，不排隊、不讀試算表） */
+function syncCheck(){
+  SYNC.busy = true; SYNC.checked = nowMs();
+  gasFetch({url:gasGetUrl('rev'), quiet:true, tries:2}, function(j){
+    SYNC.busy = false;
+    if(!j.ok){ syncFail(j.err, false); return; }
+    if(j.rev === undefined){ syncOld(); return; }
+    if(String(j.rev) === String(S.sync.rev)){ syncDone(false, 0, true); return; }
+    syncSend(syncDiff(), false);
+  }, '同步');
+}
+function syncSend(up, manual){
+  SYNC.busy = true; SYNC.checked = nowMs(); syncMark('busy');
+  var sent = snapBase();
+  if(manual) toast('同步中…');
+  gasPost({action:'sync', rev:S.sync.rev, up:{cards:up.cards, cardPatch:up.cardPatch, txns:up.txns,
+           pays:up.pays, ovrSet:up.ovrSet, ovrDel:up.ovrDel, del:up.del}}, function(j){
+    SYNC.busy = false;
+    if(!j.ok){ syncFail(j.err, manual); return; }
+    if(j.rev === undefined){ syncOld(); return; }
+    if(j.data) syncAdopt(j.data, sent);
+    else S.sync.base = sent;                    /* 雲端本來就跟這台一樣，送的也都照收 */
+    S.sync.rev = j.rev; S.sync.at = Date.now();
+    syncSave();
+    syncDone(manual, up.n, false);
+    if(j.data) syncRender();
+    if(SYNC.again || syncDiff().n){ SYNC.again = false; syncSoon(600); }
+  }, '同步', !manual);
+}
+/* 第一次同步：以雲端為準，這台多出來的補上傳 */
+function syncFirst(manual){
+  SYNC.busy = true; SYNC.checked = nowMs(); syncMark('busy');
+  gasFetch({url:gasGetUrl('pull'), quiet:!manual, tries:(manual ? 5 : 3)}, function(j){
+    SYNC.busy = false;
+    if(!j.ok){ syncFail(j.err, manual); return; }
+    if(j.rev === undefined){ syncOld(); return; }
+    var D = j.data || {}, keep = sensKeep(), ex = firstExtras(D), k, i, o = {}, so = D.ovr || {};
+    S.cards = (D.cards || []).concat(ex.cards);
+    S.txns = (D.txns || []).concat(ex.txns);
+    S.pays = (D.pays || []).concat(ex.pays);
+    for(k in so){ if(so.hasOwnProperty(k)) o[k] = so[k]; }
+    for(k in ex.ovr){ if(ex.ovr.hasOwnProperty(k)) o[k] = ex.ovr[k]; }
+    S.ovr = o;
+    if(D.catRules) mergeRules(D.catRules);
+    S.points = D.points || []; S.runs = D.runs || [];
+    sensRestore(keep); migrate20(); stripGmail();
+    var b = snapBase();
+    for(i=0;i<ex.cards.length;i++) delete b.c[ex.cards[i].id];
+    for(i=0;i<ex.txns.length;i++) delete b.t[ex.txns[i].id];
+    for(i=0;i<ex.pays.length;i++) delete b.p[ex.pays[i].id];
+    for(k in ex.ovr){ if(ex.ovr.hasOwnProperty(k)) delete b.o[k]; }
+    S.sync = {rev:j.rev, base:b, at:Date.now()};
+    syncSave();
+    syncDone(false, 0, false);
+    syncRender();
+    if(ex.n){ toast('已開始自動同步，這台多出的 '+ex.n+' 筆會補上傳'); syncSoon(400); }
+    else if(manual) toast('已同步');
+    flushRules();
+  }, '同步');
+}
+function idSet(list){ var m = {}, i; for(i=0;i<(list||[]).length;i++) m[list[i].id] = 1; return m; }
+/* 雲端沒有、這台有的：新卡、手動記帳、繳款紀錄。
+   帳單匯入的明細與帳單金額以雲端為準（重灌過的話，這台的舊資料送回去反而會錯）。 */
+function firstExtras(D){
+  var ex = {cards:[], txns:[], pays:[], ovr:{}, n:0}, ids, i;
+  ids = idSet(D.cards); for(i=0;i<S.cards.length;i++) if(!ids[S.cards[i].id]){ ex.cards.push(S.cards[i]); ex.n++; }
+  ids = idSet(D.txns);  for(i=0;i<S.txns.length;i++) if(!ids[S.txns[i].id] && !S.txns[i].src){ ex.txns.push(S.txns[i]); ex.n++; }
+  ids = idSet(D.pays);  for(i=0;i<S.pays.length;i++) if(!ids[S.pays[i].id]){ ex.pays.push(S.pays[i]); ex.n++; }
+  return ex;
+}
+function sensKeep(){
+  var m = {}, i, c;
+  for(i=0;i<S.cards.length;i++){ c = S.cards[i]; m[c.id] = {acct:c.acct, nbId:c.nbId, nbHint:c.nbHint}; }
+  return m;
+}
+function sensRestore(m){
+  if(!S.cfg.acctLocal) return;
+  var i, j, c, k, f;
+  for(i=0;i<S.cards.length;i++){
+    c = S.cards[i]; k = m[c.id];
+    if(!k) continue;
+    for(j=0;j<SENS_KEYS.length;j++){ f = SENS_KEYS[j]; if(!c[f] && k[f]) c[f] = k[f]; }
+  }
+}
+/* 雲端有新資料：換成雲端的，但送出之後才在這台改的、刪的、新增的留著 */
+function adoptList(local, server, curMap, sentMap){
+  var out = [], seen = {}, byId = {}, i, r, id;
+  for(i=0;i<local.length;i++) byId[local[i].id] = local[i];
+  for(i=0;i<server.length;i++){
+    r = server[i]; id = r.id; seen[id] = 1;
+    if(curMap[id] === undefined && sentMap[id] !== undefined) continue;                 /* 送出後刪了 */
+    if(curMap[id] !== undefined && curMap[id] !== sentMap[id] && byId[id]){ out.push(byId[id]); continue; }  /* 送出後又改了 */
+    out.push(r);
+  }
+  for(i=0;i<local.length;i++){
+    r = local[i];
+    if(!seen[r.id] && curMap[r.id] !== undefined && sentMap[r.id] === undefined) out.push(r);   /* 送出後才新增 */
+  }
+  return out;
+}
+/* 卡片：送出後又改了的，以雲端那張為底、只疊上送出後改的欄位（別台改的其他欄位不會被蓋回去）。
+   inflight 記下每張卡送出後改了哪些欄位、雲端那時的值，用來算下一輪的基準。 */
+function adoptCards(local, server, curMap, sentMap, inflight){
+  var out = [], seen = {}, byId = {}, i, r, id, k, lc, sc, m, ch;
+  for(i=0;i<local.length;i++) byId[local[i].id] = local[i];
+  for(i=0;i<server.length;i++){
+    r = server[i]; id = r.id; seen[id] = 1;
+    if(curMap[id] === undefined && sentMap[id] !== undefined) continue;                 /* 送出後刪了 */
+    if(curMap[id] !== undefined && sentMap[id] !== undefined && curMap[id] !== sentMap[id] && byId[id]){
+      lc = byId[id]; sc = JSON.parse(sentMap[id]); m = {}; ch = {};
+      for(k in r){ if(r.hasOwnProperty(k)) m[k] = r[k]; }
+      for(k in lc){
+        if(!lc.hasOwnProperty(k) || (S.cfg.acctLocal && SENS_KEYS.indexOf(k) >= 0)) continue;
+        if(stableStr(lc[k]) !== stableStr(sc[k])){ ch[k] = r.hasOwnProperty(k) ? r[k] : undefined; m[k] = lc[k]; }
+      }
+      for(k in sc){ if(sc.hasOwnProperty(k) && !lc.hasOwnProperty(k)){ ch[k] = r[k]; delete m[k]; } }
+      inflight[id] = ch;
+      out.push(m);
+      continue;
+    }
+    out.push(r);
+  }
+  for(i=0;i<local.length;i++){
+    r = local[i];
+    if(!seen[r.id] && curMap[r.id] !== undefined && sentMap[r.id] === undefined) out.push(r);   /* 送出後才新增 */
+  }
+  return out;
+}
+function markDirty(base, curMap, sentMap, mark){
+  var k;
+  for(k in curMap){
+    if(!curMap.hasOwnProperty(k)) continue;
+    if(sentMap[k] === undefined) delete base[k];               /* 送出後才新增：下一輪當新的送 */
+    else if(curMap[k] !== sentMap[k]) base[k] = mark;           /* 送出後又改了：下一輪一定會送 */
+  }
+  for(k in sentMap){ if(sentMap.hasOwnProperty(k) && curMap[k] === undefined) base[k] = mark; }   /* 送出後刪了 */
+}
+function syncAdopt(D, sent){
+  var cur = snapBase(), keep = sensKeep(), k, o = {}, so = D.ovr || {}, lo = S.ovr || {}, inflight = {}, id, bo, ch;
+  S.cards = adoptCards(S.cards, D.cards || [], cur.c, sent.c, inflight);
+  S.txns  = adoptList(S.txns,  D.txns  || [], cur.t, sent.t);
+  S.pays  = adoptList(S.pays,  D.pays  || [], cur.p, sent.p);
+  for(k in so){ if(so.hasOwnProperty(k)) o[k] = so[k]; }
+  for(k in cur.o){ if(cur.o.hasOwnProperty(k) && cur.o[k] !== sent.o[k]) o[k] = lo[k]; }
+  for(k in sent.o){ if(sent.o.hasOwnProperty(k) && cur.o[k] === undefined) delete o[k]; }
+  S.ovr = o;
+  if(D.catRules) mergeRules(D.catRules);
+  S.points = D.points || []; S.runs = D.runs || [];
+  sensRestore(keep); migrate20(); stripGmail();
+  var b = snapBase();
+  for(k in cur.c){ if(cur.c.hasOwnProperty(k) && sent.c[k] === undefined) delete b.c[k]; }      /* 送出後才新增的卡 */
+  for(k in sent.c){ if(sent.c.hasOwnProperty(k) && cur.c[k] === undefined) b.c[k] = '{}'; }     /* 送出後刪的卡 */
+  for(id in inflight){                                          /* 送出後改的欄位：基準放雲端的值，下一輪只送這幾欄 */
+    if(!inflight.hasOwnProperty(id) || b.c[id] === undefined) continue;
+    bo = JSON.parse(b.c[id]); ch = inflight[id];
+    for(k in ch){ if(ch.hasOwnProperty(k)){ if(ch[k] === undefined) delete bo[k]; else bo[k] = ch[k]; } }
+    b.c[id] = stableStr(bo);
+  }
+  markDirty(b.t, cur.t, sent.t, '!');
+  markDirty(b.p, cur.p, sent.p, '!');
+  for(k in cur.o){ if(cur.o.hasOwnProperty(k) && cur.o[k] !== sent.o[k]){ if(sent.o[k] === undefined) delete b.o[k]; else b.o[k] = '!'; } }
+  for(k in sent.o){ if(sent.o.hasOwnProperty(k) && cur.o[k] === undefined) b.o[k] = '!'; }
+  S.sync.base = b;
+}
+function syncSave(){ SYNC.mute = true; save(); SYNC.mute = false; }
+/* 雲端資料換進來之後重畫；正在輸入的時候先不重畫，免得打斷 */
+function syncRender(){
+  var a = document.activeElement;
+  if(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT')) return;
+  render();
+}
+function syncFail(err, manual){
+  if(err === '不認得的 action'){ syncOld(); return; }
+  SYNC.fails++;
+  syncMark('err', err || '連線失敗');
+  if(manual) toast('同步失敗：' + (err || '連線失敗'));
+  syncSoon([30000, 120000, 300000][Math.min(SYNC.fails, 3) - 1]);     /* 背景自動重試：30 秒、2 分、5 分 */
+}
+function syncOld(){
+  syncMark('old', '');
+  if(!SYNC.warned){ SYNC.warned = true; toast('自動同步需要 Code.gs v3.21（貼上後記得部署新版本）'); }
+}
+function syncDone(manual, n, quietCheck){
+  SYNC.fails = 0;
+  if(quietCheck){ S.sync.at = Date.now(); }
+  syncMark('ok', '');
+  if(manual) toast(n ? ('已同步 ' + n + ' 筆改動') : '已同步');
+}
+function syncMark(state, err){
+  SYNC.state = state; SYNC.err = err || '';
+  var e = $('syncst'); if(e) e.innerHTML = syncStatusHTML();
+  var h = $('hsync'); if(h) h.innerHTML = syncBadge();
+}
+function syncBadge(){
+  return (syncOn() && SYNC.state === 'err') ? ' · <span style="color:var(--brass)">未同步</span>' : '';
+}
+function agoText(t){
+  var m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? '剛剛' : (m < 60 ? m + ' 分鐘前' : (m < 1440 ? Math.round(m / 60) + ' 小時前' : Math.round(m / 1440) + ' 天前'));
+}
+function syncStatusHTML(){
+  if(!syncable()) return '還沒設定雲端，資料只存在這台裝置。';
+  if(S.cfg.autoSync === false) return '自動同步已關閉，要同步請按「立即同步」。';
+  if(SYNC.state === 'old') return '<span style="color:var(--rose)">後端是舊版：把新的 Code.gs 貼上並「部署 → 管理部署 → 新版本」，才會自動同步。</span>';
+  if(SYNC.state === 'busy') return '同步中…';
+  if(SYNC.state === 'err') return '<span style="color:var(--brass)">還沒同步成功：' + esc(SYNC.err) + '（會自動重試）</span>';
+  return (S.sync && S.sync.at) ? ('已同步 · ' + agoText(S.sync.at)) : '等待第一次同步…';
+}
+function syncInit(){
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'visible'){ if(nowMs() - SYNC.checked > 15000) syncSoon(200); }
+    else if(syncOn() && S.sync && S.sync.base && syncDiff().n) syncRun(false);    /* 切走前把改動送出去 */
+  });
+  window.addEventListener('online', function(){ syncSoon(300); });
+  window.addEventListener('pageshow', function(e){ if(e && e.persisted) syncSoon(200); });
+  setInterval(function(){ if(document.visibilityState !== 'hidden') syncSoon(0); }, 300000);
+  syncSoon(700);
 }
 
 /* ============ 啟動 ============ */
 load();
 go('ov');
 watchBreakpoint();
+syncInit();
 document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeSheet(); });
 </script>
 </body>
