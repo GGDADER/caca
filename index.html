@@ -385,6 +385,8 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
    v3.13：帳單頁不再列「沒帳單而且推估是 0」的銀行
    v3.14：帳單卡片可以點開看那一期的消費明細；即將到期不再列 0 元帳單
+   v3.21：帳單明細改成跟著「印著它的那份帳單」歸期（以前看消費日，結帳後才入帳的會被算回上一期）；
+          帳單卡片直接標出明細合計對不對得上帳單金額
    v3.20：已用額度改依帳單算（不再出現負的已用）；0 元帳單不再要你標記已繳、自動扣款過截止日算已扣；
           消費紀錄移到帳單頁（可選期別、點銀行看明細、跨期搜尋）；手機卡片頁依銀行收合；
           記帳的卡片可以搜尋；分析頁預設依帳單期、當月
@@ -398,7 +400,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.15：帳單標出期別；繳款紀錄改顯示銀行、可點開看那期明細；
           修好「結帳日一改，已繳的帳單又變回未繳」導致的重複繳款
    ================================================================== */
-var APP_VER = 'v3.20';
+var APP_VER = 'v3.21';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -946,7 +948,7 @@ function migrate20(){
 }
 function save(){
   S.cfg.rev = (S.cfg.rev||0) + 1;
-  UMAP = null;
+  UMAP = null; PMAP = null;
   try{ localStorage.setItem(KEY, JSON.stringify(S)); }
   catch(e){ toast('儲存失敗：瀏覽器空間不足'); }
   if(typeof SYNC !== 'undefined' && SYNC && !SYNC.mute) syncSoon();
@@ -982,13 +984,112 @@ function sumRange(cid, from, to){
   }
   return s;
 }
-/* 本期已結帳待繳（上上次結帳 → 上次結帳）。有帳單實際金額時以帳單為準。 */
+/* ============ 明細屬於哪一期（v3.21） ============
+   帳單匯入的明細，歸到「印著它的那份帳單」那一期，不看消費日。
+   結帳日當天或前幾天刷、結帳後才入帳的消費，還有沿用原消費日的退款，都印在下一期的帳單上；
+   以前只看消費日落在哪個週期，這些會被算回上一期：這期明細少了幾筆，上一期多出來（應繳金額不受影響）。
+   期別一律是「結帳日的年月」，跟帳單金額存的那一期同一個標準。
+   ① 後端 v3.23 起每筆明細都記了那份帳單的結帳日（bc）→ 直接用。
+   ② 舊資料沒有 bc：同一封帳單（src 的 pdf:<信件>）的明細一起看。帳單自己標的月份（cyc）跟結帳月的差，
+      同一家是固定的（多半是 0；有的銀行把 2/21 結帳那期叫 1 月份，差 1）。每份帳單投一票（只收 −1～1）：
+      沒有 bc 的投「最晚那筆消費落在的週期－標的月份」，有 bc 的投「bc 的月份－標的月份」（準確，算 3 票）；
+      這家得票最多的就是差值（一樣多取 0；簽帳金融卡另外算），這份帳單的期別＝標的月份＋差值。
+      只有晚入帳消費的那份（例如只有一筆 7/3 的 25 元）也不會被拉回上一期。
+      推出來的那期沒有帳單金額、照消費日的那期卻有 → 這份標月份的方式跟同一家其他份不同，退回照消費日。
+      推算只是過渡：解析器 --redo 跑過一次，舊明細就都有 bc 了。
+   ③ 手動記的帳沒有帳單：照消費日落在哪個結帳週期（結帳日當天算這一期）。 */
+var PMAP = null;          /* 明細 id → 期別（結帳日的年月）；資料一變（save）或重畫（render）就清掉 */
+function ymOf(d){ return d.getFullYear()+'-'+p2(d.getMonth()+1); }
+function ymAdd(ym, n){
+  var y=+ym.slice(0,4), m=+ym.slice(5,7)-1+n, q=Math.floor(m/12);
+  return (y+q)+'-'+p2(m-q*12+1);
+}
+function ymDiff(a, b){ return (+a.slice(0,4) - +b.slice(0,4))*12 + (+a.slice(5,7) - +b.slice(5,7)); }
+/* 這一天落在哪一次結帳 */
+function closeOn(c, d){
+  var x = mk(d.getFullYear(), d.getMonth(), c.close);
+  return d > x ? mk(d.getFullYear(), d.getMonth()+1, c.close) : x;
+}
+/* 同一封帳單的明細：src 是「pdf:<信件>:<第幾筆>」 */
+function stmtKey(t){
+  var s=String(t.src||''), i=s.lastIndexOf(':');
+  return (s.indexOf('pdf:')===0 && i>4) ? s.slice(0,i) : '';
+}
+function bankKey(c){ return normCode(c.code) || ('C'+c.id); }
+/* 投票分組：同一家的簽帳金融卡帳單另外算（標月份的方式可能跟信用卡不同） */
+function votePool(c){ return bankKey(c) + (c.deb ? '/D' : ''); }
+/* 這家「帳單標的月份」跟結帳月差幾個月的一票。只收 −1～1：
+   差更多的是個案（只有分期列、沿用好幾個月前的消費日，或標的月份寫錯），不代表這家的叫法，不算票。 */
+function perVote(V, bank, dv, w){
+  if(dv < -1 || dv > 1) return;
+  if(!V[bank]) V[bank]={'-1':0, '0':0, '1':0};
+  V[bank][String(dv)] += w;
+}
+function perMap(){
+  if(PMAP) return PMAP;
+  var M={}, CM={}, ST={}, SL=[], EX={}, V={}, B={}, BM={}, OV=S.ovr||{}, i, j, t, c, d, ym, lab, bc, k, s, b, at, n0, n1, nm;
+  for(i=0;i<S.cards.length;i++) CM[S.cards[i].id]=S.cards[i];
+  /* 每家有帳單金額的月份。S.ovr 的鍵是「B<代碼>|…@結帳日」，沒有代碼的卡是「C<卡片 id>@結帳日」 */
+  for(k in OV){
+    if(!OV.hasOwnProperty(k)) continue;
+    at=k.indexOf('@'); if(at<0) continue;
+    b=k.charAt(0)==='B' ? k.slice(1, at).split('|')[0] : (k.charAt(0)==='C' ? k.slice(0, at) : '');
+    if(!b) continue;
+    if(!BM[b]) BM[b]={};
+    BM[b][k.slice(at+1, at+8)]=1;
+  }
+  for(i=0;i<S.txns.length;i++){
+    t=S.txns[i]; c=CM[t.cid]; bc=String(t.bc||''); lab=String(t.cyc||'').slice(0,7);
+    if(!/^\d{4}-\d{2}$/.test(lab)) lab='';
+    if(/^\d{4}-\d{2}-\d{2}/.test(bc)){                                                   /* ① */
+      M[t.id]=ymOf(pd(bc));
+      /* 有 bc 的帳單直接告訴我們這家「標的月份」跟結帳月差多少：給還沒補 bc 的舊明細當準確的一票 */
+      k=stmtKey(t) || ('#'+t.id);
+      if(c && lab && !EX[k]) EX[k]={pool:votePool(c), dv:ymDiff(M[t.id], lab)};
+      continue;
+    }
+    if(!c) continue;
+    d=pd(t.d);
+    if(isNaN(d.getTime())) continue;
+    ym=ymOf(closeOn(c, d));
+    if(!lab){ M[t.id]=ym; continue; }                                                     /* ③ */
+    k=stmtKey(t) || ('#'+t.id);                                                           /* ② */
+    s=ST[k];
+    if(!s){ s=ST[k]={lab:lab, top:ym, pool:votePool(c), bk:bankKey(c), deb:!!c.deb, ids:[]}; SL.push(s); }
+    if(ym > s.top) s.top=ym;
+    s.ids.push(t.id);
+  }
+  for(k in EX){ if(EX.hasOwnProperty(k)) perVote(V, EX[k].pool, EX[k].dv, 3); }
+  for(i=0;i<SL.length;i++) perVote(V, SL[i].pool, ymDiff(SL[i].top, SL[i].lab), 1);
+  /* 得票最多的；一樣多就取 0（大多數銀行） */
+  for(b in V){
+    if(!V.hasOwnProperty(b)) continue;
+    n0=V[b]['0']; n1=V[b]['1']; nm=V[b]['-1'];
+    B[b] = (n1 > n0 && n1 > nm) ? 1 : ((nm > n0 && nm > n1) ? -1 : 0);
+  }
+  for(i=0;i<SL.length;i++){
+    s=SL[i]; ym=ymAdd(s.lab, B[s.pool] || 0);
+    /* 推出來的那期沒有帳單金額、照消費日的那期卻有：這份帳單標月份的方式跟同一家其他份不一樣
+       （例如主旨沒寫月份、改用結帳日），退回照消費日 */
+    if(!s.deb && ym!==s.top && BM[s.bk] && !BM[s.bk][ym] && BM[s.bk][s.top]) ym=s.top;
+    for(j=0;j<s.ids.length;j++) M[s.ids[j]]=ym;
+  }
+  PMAP=M;
+  return M;
+}
+/* 這張卡在 ym 那一期（結帳日的年月）的明細合計 */
+function perSum(cid, ym){
+  var M=perMap(), s=0, i, t;
+  for(i=0;i<S.txns.length;i++){ t=S.txns[i]; if(t.cid===cid && M[t.id]===ym) s += Number(t.a)||0; }
+  return s;
+}
+/* 本期已結帳待繳（上次結帳那一期的明細）。有帳單實際金額時以帳單為準。 */
 function ovrKey(c){ return c.id+'|'+cycKey(c); }
 function stmtAmount(c){
   if(S.ovr && S.ovr[ovrKey(c)] !== undefined) return Number(S.ovr[ovrKey(c)])||0;
-  return sumRange(c.id, prevClose(c), lastClose(c));
+  return stmtEst(c);
 }
-function stmtEst(c){ return sumRange(c.id, prevClose(c), lastClose(c)); }
+function stmtEst(c){ return perSum(c.id, ymOf(lastClose(c))); }
 function hasOvr(c){ return !!(S.ovr && S.ovr[ovrKey(c)] !== undefined); }
 /* 未出帳（上次結帳 → 今天） */
 function unbilled(c){ return sumRange(c.id, lastClose(c), today()); }
@@ -1182,7 +1283,7 @@ function billGroups(ref){
     g.est = 0; g.unbilled = 0;
     for(j=0;j<g.cards.length;j++){
       var cj=g.cards[j];
-      if(ref) g.est += sumRange(cj.id, prevClose(cj, ref), lastClose(cj, ref));
+      if(ref) g.est += perSum(cj.id, ymOf(lastClose(cj, ref)));
       else{ g.est += stmtAmount(cj); g.unbilled += unbilled(cj); }
     }
     var ov = ovrAmtG(g);
@@ -1260,7 +1361,7 @@ function go(tab){
 }
 function render(){
   var h = '';
-  UMAP = null;
+  UMAP = null; PMAP = null;
   if(TAB==='ov')  h = vOverview();
   if(TAB==='cd')  h = vCards();
   if(TAB==='add') h = vAdd();
@@ -1749,13 +1850,17 @@ var BILLV = {per:'', q:'', open:{}};   /* 帳單頁：per＝期別（空＝本�
 function perRef(per){ return per ? cycRef(per) : null; }
 /* 有資料的帳單期（帳單金額、帳單明細、繳款紀錄），新的在前，只到這個月 */
 function billMonths(){
-  var set={}, k, i, out=[], m, cur=ds(today()).slice(0,7);
+  var set={}, k, i, out=[], m, cur=ds(today()).slice(0,7), PM=perMap();
   for(k in S.ovr){
     if(!S.ovr.hasOwnProperty(k)) continue;
     var at=k.indexOf('@'); if(at<0) continue;
     m=k.slice(at+1, at+8); if(/^\d{4}-\d{2}$/.test(m)) set[m]=1;
   }
-  for(i=0;i<S.txns.length;i++){ m=String(S.txns[i].cyc||'').slice(0,7); if(/^\d{4}-\d{2}$/.test(m)) set[m]=1; }
+  /* 帳單匯入的明細（有 cyc 或 bc）照它歸到的那一期；手動記帳不產生期別 */
+  for(i=0;i<S.txns.length;i++){
+    if(!S.txns[i].cyc && !S.txns[i].bc) continue;
+    m=String(PM[S.txns[i].id]||''); if(/^\d{4}-\d{2}$/.test(m)) set[m]=1;
+  }
   for(i=0;i<S.pays.length;i++){ m=String(S.pays[i].cyc||'').slice(0,7); if(/^\d{4}-\d{2}$/.test(m)) set[m]=1; }
   for(k in set){ if(set.hasOwnProperty(k) && k<=cur) out.push(k); }
   out.sort(); out.reverse();
@@ -2020,6 +2125,12 @@ function billCard(g, compact){
       +  (g.hasOvr ? '帳單金額：'+fmt(g.amt)+'（點此修改）' : '輸入帳單上的實際應繳金額')+'</button>'
       +  '<button class="bxt" onclick="toggleBillOpen(\''+gk+'\')" aria-expanded="'+(open?'true':'false')+'">'
       +  '<span>明細 '+ts.length+' 筆</span><span class="sp"></span><span class="num">'+money(tsum)+'</span>'
+      /* 有帳單金額時直接標出對不對得上，不用每家展開就能核對 */
+      +  (g.hasOvr && ts.length
+           ? (Math.round(tsum)===Math.round(g.amt)
+              ? '<span class="num" style="color:var(--mint);margin-left:6px" title="明細合計等於帳單金額">✓</span>'
+              : '<span class="num" style="color:var(--amber);margin-left:6px" title="明細合計跟帳單金額不一樣">差 '+money(g.amt-tsum)+'</span>')
+           : '')
       +  '<span class="chev">'+(open?'▾':'▸')+'</span></button>';
     if(open) h += billTxHTML(g, ts, tsum);
   }else{
@@ -2976,7 +3087,7 @@ function doParse(){
 function ovrSheet(cid){
   var c=byId(S.cards,cid); if(!c) return;
   openSheet('<h3>帳單實際應繳</h3>'
-    + '<div class="mut2">系統推估是 <b>'+fmt(stmtEst(c))+'</b>（用結帳日區間加總）。'
+    + '<div class="mut2">系統推估是 <b>'+fmt(stmtEst(c))+'</b>（這一期明細的加總）。'
     + '銀行帳單有分期、循環利息、年費、外幣匯差時會有落差，把帳單上的數字填進來最準。</div>'
     + '<input type="hidden" id="o_cid" value="'+cid+'">'
     + '<label>本期應繳（元）</label><input id="o_a" class="amtin num" type="text" inputmode="decimal" value="'+(hasOvr(c)?stmtAmount(c):stmtEst(c))+'">'
@@ -3035,20 +3146,16 @@ function unpayG(gkey, per){
   }
   S.pays=n; save(); render(); toast('已取消');
 }
-/* 這一期的消費明細。帳單群組可能是同一家的好幾張卡合併，
-   每張卡的結帳日可能不同，所以逐卡各自算自己的週期。 */
-/* ref 給哪一天，就算哪一期；不給就是現在這一期。
-   逐卡各算各的週期，因為同一家銀行的幾張卡結帳日不一定相同。 */
+/* 這一期的消費明細。帳單群組可能是同一家的好幾張卡合併。
+   ref 給哪一天，就算哪一期；不給就是現在這一期。
+   帳單匯入的明細跟著「印著它的那份帳單」走（v3.21，見 perMap），不看消費日；
+   同一組的卡結帳日一定相同（群組鍵含結帳日），所以用主卡算期別。 */
 function billTxns(g, ref){
-  var out = [], i, j;
-  for(i=0;i<g.cards.length;i++){
-    var c = g.cards[i], a = prevClose(c, ref), b = lastClose(c, ref);
-    for(j=0;j<S.txns.length;j++){
-      var t = S.txns[j];
-      if(t.cid !== c.id) continue;
-      var d = pd(t.d);
-      if(d > a && d <= b) out.push(t);
-    }
+  var out = [], M = perMap(), ids = {}, ym = ymOf(lastClose(g.primary, ref)), i, t;
+  for(i=0;i<g.cards.length;i++) ids[g.cards[i].id] = 1;
+  for(i=0;i<S.txns.length;i++){
+    t = S.txns[i];
+    if(ids[t.cid] && M[t.id] === ym) out.push(t);
   }
   out.sort(function(x, y){ return x.d < y.d ? 1 : (x.d > y.d ? -1 : 0); });
   return out;
