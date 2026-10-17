@@ -390,6 +390,9 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
    v3.13：帳單頁不再列「沒帳單而且推估是 0」的銀行
    v3.14：帳單卡片可以點開看那一期的消費明細；即將到期不再列 0 元帳單
+   v3.23：銀行費用：帳單卡片直接標出這期的年費、利息、違約金、手續費（減免的抵掉；有年費提醒可以申請減免、
+          有利息或違約金提醒上期可能沒繳清）；分析頁多「銀行費用」（選的期間）與「固定支出」
+          （每月／每兩個月／每季固定扣一筆、金額差不多的：電信、訂閱、保險…，每月約多少、這期還沒扣的標出來）
    v3.22：帳單該來沒來：上期有應繳、這期結帳 12 天（截止前 3 天）還沒帳單 → 總覽最上面、帳單頁標出來，
           可以直接輸入帳單金額或記為「這期沒有帳單」；
           「太久沒自動匯入」改看你平常多久跑一次（每月手動跑的不會每個月都掛紅字）
@@ -408,7 +411,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.15：帳單標出期別；繳款紀錄改顯示銀行、可點開看那期明細；
           修好「結帳日一改，已繳的帳單又變回未繳」導致的重複繳款
    ================================================================== */
-var APP_VER = 'v3.22';
+var APP_VER = 'v3.23';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -2191,6 +2194,12 @@ function billCard(g, compact){
   if(!compact){
     var ts=billTxns(g, g.ref), tsum=0, bycard={};
     for(i=0;i<ts.length;i++){ var av=Number(ts[i].a)||0; tsum+=av; bycard[ts[i].cid]=(bycard[ts[i].cid]||0)+av; }
+    /* 這期帳單裡銀行收的費用（年費、利息、違約金、手續費），不用展開明細就看得到（v3.23） */
+    var FS=feeSum(ts);
+    if(FS.n){
+      h += '<div style="margin-top:9px;font-size:12.5px;color:'+(feeOwed(FS)?'var(--amber)':'var(--dim2)')+'">'
+        +  (feeOwed(FS) ? '這期有銀行費用：' : '這期銀行費用：')+feeText(FS)+'</div>'+feeHint(FS);
+    }
     if(g.cards.length>1){
       h += '<div style="margin-top:9px;padding-top:9px;border-top:1px dashed var(--line)">';
       for(i=0;i<g.cards.length;i++){
@@ -2291,6 +2300,211 @@ function rank(obj){
   for(k in obj){ if(obj.hasOwnProperty(k)) arr.push({k:k, v:obj[k]}); }
   arr.sort(function(a,b){ return b.v-a.v; });
   return arr;
+}
+
+/* ============ 銀行費用：年費、利息、違約金、手續費（v3.23） ============
+   從帳單明細的文字認名目；減免、退還的（負數）也認，跟收的抵掉（減免在下一期才出現的，那期寫「退回」）。
+   FEE_STRONG：銀行才會這樣寫的名目，同一行有店家名也算（「國外交易服務費 NETFLIX.COM」）。
+   FEE_WEAK：名目對了也可能是跟店家買的（好市多會員年費、電信違約金、水費滯納金、保單借款利息）→
+   只有「整行只有費用名目」（去掉卡別、期別、數字、標點、名目後什麼都不剩，例如「會員年費」），
+   或剩下的是卡片的字（「Live+卡年費」「年費（白金卡）」）而且不是 FEE_NOT 的店家，才算。
+   「手續費／服務費」沒說是哪一種的，也要整行只有名目才算。英文名目要整個字（PINTEREST 不是 INTEREST）。 */
+var FEE_STRONG = [
+  ['手續費', '國外交易手續費', /(?:國外|海外|境外|跨國|跨境|外幣)(?:交易|刷卡|消費)?(?:服務|手續|處理)費|\bFOREIGN\s*(?:TRANSACTION|TRANS|TXN|CURRENCY|EXCHANGE)?\s*(?:SERVICE\s*)?FEE\b|\bINTERNATIONAL\s*(?:TRANSACTION\s*|SERVICE\s*)?FEE\b/],
+  ['手續費', '預借現金手續費', /預借現金.{0,4}(?:手續|服務)費|\bCASH\s*ADVANCE\s*FEE\b/],
+  ['手續費', '分期手續費',     /分期.{0,4}(?:手續|服務)費/],
+  ['手續費', '手續費',         /(?:掛失|補發卡|補發|補寄帳單|補寄|調閱簽單|調閱|溢繳款?退款|代償).{0,4}(?:手續|服務|處理)費/],
+  ['違約金', '違約金',         /(?:遲繳|逾期|延滯|遲延)(?:繳款)?(?:手續費|違約金)|\bLATE\s*(?:PAYMENT\s*)?(?:FEE|CHARGE)\b/],
+  ['利息',   '循環利息',       /循環(?:信用)?利息|\bFINANCE\s*CHARGE\b/],
+  ['利息',   '預借現金利息',   /預借現金.{0,4}利息|\bCASH\s*ADVANCE\s*INTEREST\b/],
+  ['利息',   '分期利息',       /分期.{0,6}利息/]
+];
+var FEE_WEAK = [
+  ['違約金', '違約金', /違約金|滯納金/],
+  ['利息',   '利息',   /利息|\bINTEREST\b/],
+  ['年費',   '年費',   /年費|\bANNUAL\s*FEE\b/]
+];
+var FEE_ORDER = ['年費', '利息', '違約金', '手續費'];
+var FEE_NOT = /好市多|COSTCO|會員卡|健身|GYM|PRIME|AMAZON|俱樂部|CLUB|協會|學會|公會|商會|基金會|扶輪|獅子會|同濟會|青商會|校友|同學會|社團|社費|學費|管理費|停車|保險|保費|保單|借款|貸款|電信|中華電|台灣大哥大|台哥大|遠傳|亞太電|台灣之星|電話費|手機費|網路費|水費|自來水|電費|台電|瓦斯|規費|罰鍰|繳稅|稅款|所得稅|房屋稅|地價稅|牌照稅|燃料|悠遊|一卡通|ICASH|加值|NETFLIX|SPOTIFY|KKBOX|APPLE|GOOGLE|YOUTUBE|DISNEY|MICROSOFT|ADOBE|DROPBOX|OPENAI|LINKEDIN|訂閱|旅行社|餐廳|飯店|酒店|HOTEL/;
+var FEE_STRIP = /信用卡|正卡|附卡|主卡|卡片|會員|本期|收取|減免|免收|退還|退回|沖回|沖銷|回沖|沖正|調整|補收|違約金|滯納金|利息|年費|手續費|服務費|處理費|費用|\bANNUAL\b|\bINTEREST\b|\bFEE\b|[\d\s.,:;\/()（）\-－_*#+@&%$]/g;
+/* 剩下的字是卡片的（卡名、卡別、等級） */
+var FEE_CARDISH = /卡|CARD|VISA|MASTER|JCB|AMEX|御璽|白金|鈦金|無限|世界|極致|晶緻|商務|金卡|普卡|LIVE/;
+var _feeMemo = {};
+/* 這筆是不是銀行收的費用：回 {k:年費／利息／違約金／手續費, n:顯示的名目} 或 null */
+function feeOf(t){
+  var raw=String(t && t.m || '');
+  if(_feeMemo.hasOwnProperty(raw)) return _feeMemo[raw];
+  var m=normMer(raw), r=null, i, only, rest;
+  if(m && !isNoShop(m)){
+    for(i=0;i<FEE_STRONG.length;i++){ if(FEE_STRONG[i][2].test(m)){ r={k:FEE_STRONG[i][0], n:FEE_STRONG[i][1]}; break; } }
+    if(!r){
+      rest = m.replace(FEE_STRIP, '');
+      only = !rest;                                       /* 整行只有費用名目 */
+      if(only || (FEE_CARDISH.test(rest) && !FEE_NOT.test(m))){
+        for(i=0;i<FEE_WEAK.length;i++){ if(FEE_WEAK[i][2].test(m)){ r={k:FEE_WEAK[i][0], n:FEE_WEAK[i][1]}; break; } }
+      }
+      if(!r && only && /手續費|服務費/.test(m)) r={k:'手續費', n:'手續費'};
+    }
+  }
+  _feeMemo[raw]=r;
+  return r;
+}
+/* 一組明細裡的費用：各名目的淨額（收的－減免的）、收了多少、各細目的淨額、逐筆 */
+function feeSum(ts){
+  var F={n:0, net:0, by:{}, lines:[]}, i, f, a, b;
+  for(i=0;i<ts.length;i++){
+    f=feeOf(ts[i]); if(!f) continue;
+    a=Number(ts[i].a)||0;
+    b=F.by[f.k] || (F.by[f.k]={k:f.k, net:0, gross:0, names:{}});
+    b.net+=a; if(a>0) b.gross+=a; b.names[f.n]=(b.names[f.n]||0)+a;
+    F.n++; F.net+=a;
+    F.lines.push({t:ts[i], k:f.k, n:f.n, a:a});
+  }
+  return F;
+}
+function feeName(b){
+  var ns=[], k;
+  for(k in b.names){ if(b.names.hasOwnProperty(k)) ns.push(k); }
+  return ns.length===1 ? ns[0] : b.k;
+}
+/* 一個名目怎麼寫：收了 →「年費 1,200」；這期收了又減免掉 →「年費 1,200 已減免」；
+   只有減免、退還（收的在前一期）→「年費退回 1,200」 */
+function feePart(b){
+  if(b.net > 0) return feeName(b)+' '+money(b.net);
+  if(b.gross > 0) return feeName(b)+' '+money(b.gross)+' 已減免';
+  if(b.net < 0) return feeName(b)+'退回 '+money(-b.net);
+  return '';
+}
+function feeText(F){
+  var out=[], i, b, p;
+  for(i=0;i<FEE_ORDER.length;i++){
+    b=F.by[FEE_ORDER[i]]; if(!b) continue;
+    p=feePart(b); if(p) out.push(p);
+  }
+  return out.join(' · ');
+}
+function feeOwed(F){ var i, b; for(i=0;i<FEE_ORDER.length;i++){ b=F.by[FEE_ORDER[i]]; if(b && b.net>0) return true; } return false; }
+function feeHint(F){
+  var h=[], by=F.by, late=false, n;
+  if(by['年費'] && by['年費'].net>0) h.push('年費可以打給銀行問能不能減免');
+  if(by['違約金'] && by['違約金'].net>0) late=true;
+  /* 分期、預借現金本來就有利息；只有循環利息（或沒寫是哪種的利息）代表上期沒繳清 */
+  if(by['利息']){ for(n in by['利息'].names){ if(by['利息'].names.hasOwnProperty(n) && (n==='循環利息' || n==='利息') && by['利息'].names[n]>0) late=true; } }
+  if(late) h.push('有循環利息或違約金：上一期可能沒繳清或晚繳了');
+  return h.length ? '<div class="mut2" style="margin-top:2px">'+h.join('；')+'</div>' : '';
+}
+
+/* ============ 固定支出：每月（或每兩個月、每季）固定扣的（v3.23） ============
+   最近 13 個月裡，同一張卡、同一個商店（數字與標點拿掉後同名，「繳交115年01月份電話費」每期才會同名），照消費日的月份：
+   至少 3 期、間隔固定、每期一筆、金額穩定（最近 4 期差 25% 以內，或只變過一次價：前後各自差 5% 以內＝漲價、降價；
+   繳費、保險類金額會變也算）。同一個商店的退款先抵掉（同月或下個月退的；先抵有重複扣款的那個月）。
+   停用的卡不列；同一個商店之後改在別張卡扣（換卡）→ 舊卡那項不列。
+   少扣一期 →「這期還沒看到」：同一家銀行已經匯入比預定那期晚 5 天以上的帳單明細，那期卻沒扣（可能取消了）。
+   連兩期沒扣 → 不列：也看帳單結帳日（應繳金額的鍵），這張卡只有這筆訂閱、停了以後沒有明細也看得出來。
+   手動記的帳、簽帳金融卡不拿來判斷信用卡帳單匯入到哪（時間對不上）；全是手動記的那項，照今天判斷。 */
+var REC_SPREAD = 1.25, REC_STEP = 1.05;
+function recKey(m){
+  var u=normMer(m);
+  if(!u || isNoShop(u)) return '';
+  u=u.replace(/\d+/g,'').replace(/[\s.,:;\/\\()（）\[\]【】「」'"‘’“”\-－—_*#+@&%$!?！？、，。．：；|~]+/g,'');
+  return u.length>=2 ? u : '';
+}
+function median(arr){
+  var a=arr.slice().sort(function(x,y){ return x-y; }), n=a.length;
+  return n ? (n%2 ? a[(n-1)/2] : (a[n/2-1]+a[n/2])/2) : 0;
+}
+function within(arr, r){ return Math.max.apply(null, arr) <= Math.min.apply(null, arr)*r; }
+/* 金額穩定：整段差 25% 以內，或只變過一次價（前後兩段各自差 5% 以內） */
+function recSteady(rec){
+  if(within(rec, REC_SPREAD)) return true;
+  for(var p=1;p<rec.length;p++){ if(within(rec.slice(0,p), REC_STEP) && within(rec.slice(p), REC_STEP)) return true; }
+  return false;
+}
+/* 帳單匯入的範圍看哪個鍵：信用卡＝銀行（同一家的卡一起出帳單）；簽帳金融卡、沒有機構代碼的＝那張卡自己 */
+function covKey(c, cid){
+  if(!c) return 'C:'+cid;
+  if(c.deb) return 'D:'+c.id;
+  return normCode(c.code) ? 'B'+normCode(c.code) : 'C:'+c.id;
+}
+/* 從 last 起每 every 個月一期，到 cv 為止有幾期過了 5 天還沒扣 */
+function recMissed(last, every, cv){
+  var n=0, j;
+  if(!cv) return 0;
+  for(j=1;j<=3;j++){ if(dayDiff(addMonths(last, every*j), cv) > 5) n=j; }
+  return n;
+}
+function recurring(){
+  var t=today(), endYm=ymOf(t), fromYm=ymAdd(endYm, -12), G={}, covR={}, covO={}, neg=[], i, x, a, d, k, c, ck0, ym2, rk, pdf;
+  /* 帳單結帳日（應繳金額的鍵 群組@結帳日）：只用來判斷「連兩期沒扣」 */
+  for(k in (S.ovr||{})){
+    if(!S.ovr.hasOwnProperty(k)) continue;
+    var at=k.indexOf('@'), bar=k.indexOf('|'), dd=k.slice(at+1, at+11);
+    if(at<0 || !/^\d{4}-\d{2}-\d{2}$/.test(dd)) continue;
+    ck0 = (k.charAt(0)==='B' && bar>1) ? ('B'+k.slice(1, bar)) : ('C:'+k.slice(1, at));
+    if(!covO[ck0] || dd>covO[ck0]) covO[ck0]=dd;
+  }
+  for(i=0;i<S.txns.length;i++){
+    x=S.txns[i]; d=String(x.d||'');
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    c=byId(S.cards, x.cid);
+    ck0=covKey(c, x.cid);
+    pdf=String(x.src||'').indexOf('pdf:')===0;
+    if(pdf && (!covR[ck0] || d>covR[ck0])) covR[ck0]=d;      /* 這家銀行的帳單明細匯入到哪一天 */
+    if(c && c.off) continue;                                  /* 停用的卡：不會再扣了 */
+    a=Number(x.a)||0; ym2=d.slice(0,7);
+    if(x.kind==='回饋' || ym2<fromYm || ym2>endYm) continue;
+    rk=recKey(x.m); if(!rk) continue;
+    k=x.cid+'|'+rk;
+    if(a<0){ neg.push([k, ym2, a]); continue; }               /* 退款：等一下抵掉同一個商店的扣款 */
+    if(!(a>0)) continue;
+    if(!G[k]) G[k]={cid:x.cid, rk:rk, ck:ck0, by:{}, manual:true};
+    if(pdf) G[k].manual=false;
+    (G[k].by[ym2] || (G[k].by[ym2]={n:0, s:0, last:null})).n++;
+    G[k].by[ym2].s+=a;
+    if(!G[k].by[ym2].last || d>String(G[k].by[ym2].last.d)) G[k].by[ym2].last=x;
+  }
+  /* 退款抵哪個月：同月或上個月，先找有重複扣款（一個月兩筆以上）的，再找有扣款的；都沒有就不算 */
+  for(i=0;i<neg.length;i++){
+    var gg=G[neg[i][0]], cands2=gg ? [gg.by[neg[i][1]], gg.by[ymAdd(neg[i][1], -1)]] : [], pick=null, q;
+    for(q=0;q<cands2.length && !pick;q++){ if(cands2[q] && cands2[q].n>1) pick=cands2[q]; }
+    for(q=0;q<cands2.length && !pick;q++){ if(cands2[q] && cands2[q].n>0) pick=cands2[q]; }
+    if(pick){ pick.s+=neg[i][2]; pick.n--; }
+  }
+  var cand=[], gk;
+  for(gk in G){
+    if(!G.hasOwnProperty(gk)) continue;
+    var g=G[gk], ms=[], mk2, multi=0, gaps={}, gap, best=0, bestN=0, amts=[], last=null;
+    for(mk2 in g.by){ if(g.by.hasOwnProperty(mk2) && g.by[mk2].s>0) ms.push(mk2); }   /* 整個月都退掉的不算一期 */
+    if(ms.length < 3) continue;
+    ms.sort();
+    for(i=0;i<ms.length;i++){ if(g.by[ms[i]].n>1) multi++; }
+    if(multi > ms.length*0.25) continue;                     /* 每期一筆（偶爾一期兩筆可以） */
+    for(i=1;i<ms.length;i++){ gap=ymDiff(ms[i], ms[i-1]); gaps[gap]=(gaps[gap]||0)+1; }
+    for(gap in gaps){ if(gaps.hasOwnProperty(gap) && gaps[gap]>bestN){ bestN=gaps[gap]; best=+gap; } }
+    if(best<1 || best>3 || bestN < Math.max(2, (ms.length-1)*0.6)) continue;   /* 間隔固定：每月、每兩個月、每季 */
+    for(i=0;i<ms.length;i++) amts.push(g.by[ms[i]].s);
+    last=g.by[ms[ms.length-1]].last;
+    var rec=amts.slice(-4), cat=txCat(last), varies=(cat==='費' || cat==='保');
+    if(!varies && !recSteady(rec)) continue;
+    var lastD=pd(String(last.d));
+    var mR = g.manual ? recMissed(lastD, best, t) : recMissed(lastD, best, covR[g.ck] ? pd(covR[g.ck]) : null);
+    var mO = recMissed(lastD, best, covO[g.ck] ? pd(covO[g.ck]) : null);
+    if(Math.max(mR, mO) >= 2) continue;                       /* 連兩期沒扣：停了，不列 */
+    var amt = varies ? median(rec) : amts[amts.length-1];     /* 訂閱類用最近一期（變價後的價錢），繳費保險用中位數 */
+    cand.push({cid:g.cid, rk:g.rk, m:last.m, cat:cat, every:best, n:ms.length, amt:amt, monthly:amt/best,
+               first:ms[0], lastYm:ms[ms.length-1], last:String(last.d), late:mR===1});
+  }
+  /* 換卡：同一個商店後來改在別張卡扣（新的那張開始時，舊的已經沒再扣）→ 舊的那項不列，免得每月多算一次 */
+  var out=[], j, moved;
+  for(i=0;i<cand.length;i++){
+    moved=false;
+    for(j=0;j<cand.length;j++){
+      if(j!==i && cand[j].rk===cand[i].rk && cand[j].cid!==cand[i].cid && cand[j].first>cand[i].lastYm) moved=true;
+    }
+    if(!moved) out.push(cand[i]);
+  }
+  out.sort(function(p,q){ return q.monthly-p.monthly || (p.m<q.m?-1:1); });
+  return out;
 }
 function vAnalysis(){
   if(!S.txns.length && !S.cards.length) return emptyState();
@@ -2476,9 +2690,61 @@ function vAnalysis(){
   var pb = ptBlock();
   if(pb) B.pts = sec('紅利點數 / 里程', pb);
 
-  var cols = B.recon ? [['hero','recon','comp'],['bars','cat','rank','pts']]
-                     : [['hero','cat','comp'],['bars','rank','pts']];
-  return lay(B, ['filt','hero','bars','cat','recon','rank','pts','comp'], cols, 'c66', ['filt']);
+  /* 銀行費用（v3.23）：上面選的期間裡，年費、利息、違約金、手續費各多少（減免的抵掉） */
+  var fts=[];
+  for(i=0;i<S.txns.length;i++){ var kf=txKey(S.txns[i]); if(kf && kf>=from && kf<=to) fts.push(S.txns[i]); }
+  var FA=feeSum(fts);
+  if(FA.n){
+    var fl=FA.lines.slice().sort(function(p,q){ var a1=String(p.t.d||''), b1=String(q.t.d||''); return a1<b1 ? 1 : (a1>b1 ? -1 : 0); });
+    h = '<div class="card">'
+      + '<div class="ln" style="margin-bottom:6px"><span>合計（減免的已抵掉）</span><span class="num" style="font-weight:700;color:'
+      + (FA.net>0?'var(--amber)':'var(--mint)')+'">'+money(FA.net)+'</span></div>'
+      + '<div class="chips" style="margin-bottom:6px">';
+    for(i=0;i<FEE_ORDER.length;i++){
+      var fb=FA.by[FEE_ORDER[i]]; if(!fb) continue;
+      var fv='<b class="num" style="color:var(--brass)">';
+      h += '<span class="chip">'+(fb.net>0 ? esc(feeName(fb))+' '+fv+money(fb.net)+'</b>'
+          : (fb.gross>0 ? esc(feeName(fb))+' '+fv+money(fb.gross)+'</b> 已減免'
+          : esc(feeName(fb))+'退回 '+fv+money(-fb.net)+'</b>'))+'</span>';
+    }
+    h += '</div><table class="tbl"><tr><th>日期</th><th>項目</th><th class="r">金額</th></tr>';
+    for(i=0;i<fl.length && i<40;i++){
+      var ft=fl[i].t;
+      h += '<tr><td class="num mut2">'+esc(String(ft.d||'').slice(5).replace('-','/'))+'</td>'
+        +  '<td style="word-break:break-all">'+esc(ft.m)+'<div class="mut2">'+esc(cardTitle(byId(S.cards, ft.cid)))+'</div></td>'
+        +  '<td class="num r" style="color:'+(fl[i].a<0?'var(--mint)':'var(--txt)')+'">'+money(fl[i].a)+'</td></tr>';
+    }
+    h += '</table>'+(fl.length>40 ? '<div class="mut2">只列最近 40 筆</div>' : '')
+      +  '<div class="mut2" style="margin-top:8px">從帳單明細的文字認出來的。帳單把利息、年費印在明細表外面的，這裡看不到（帳單卡片會標「差」）。</div></div>';
+    B.fee = sec('銀行費用<span class="ct">年費、利息、違約金、手續費</span>', h);
+  }
+
+  /* 固定支出（v3.23）：跟上面選的月份無關，看最近 13 個月 */
+  var RC=recurring();
+  if(RC.length){
+    var rtot=0, EV={1:'每月', 2:'每兩個月', 3:'每季'};
+    for(i=0;i<RC.length;i++) rtot+=RC[i].monthly;
+    h = '<div class="card">'
+      + '<div class="ln" style="margin-bottom:4px"><span>每月約</span><span class="num" style="font-weight:700;color:var(--brass)">'
+      + money(Math.round(rtot))+'</span></div>'
+      + '<div class="mut2" style="margin-bottom:8px">一年約 '+money(Math.round(rtot*12))
+      + '。每期固定扣一筆、金額差不多的（電信、水電、保險金額會變也算）。</div>'
+      + '<table class="tbl"><tr><th>項目</th><th class="r">頻率</th><th class="r">金額</th><th class="r">上次</th></tr>';
+    for(i=0;i<RC.length;i++){
+      var rq=RC[i];
+      h += '<tr><td style="word-break:break-all">'+esc(baseMerchant(rq.m) || rq.m)+'<div class="mut2">'+esc(cardTitle(byId(S.cards, rq.cid)))+'</div></td>'
+        +  '<td class="r mut2">'+EV[rq.every]+'</td>'
+        +  '<td class="num r">'+money(Math.round(rq.amt))+'</td>'
+        +  '<td class="num r mut2">'+esc(rq.last.slice(5).replace('-','/'))
+        +  (rq.late ? '<div style="color:var(--amber)">這期還沒看到</div>' : '')+'</td></tr>';
+    }
+    h += '</table></div>';
+    B.rec = sec('固定支出<span class="ct">最近 13 個月 · '+RC.length+' 項</span>', h);
+  }
+
+  var cols = B.recon ? [['hero','fee','recon','comp'],['bars','cat','rec','rank','pts']]
+                     : [['hero','fee','cat','comp'],['bars','rec','rank','pts']];
+  return lay(B, ['filt','hero','fee','bars','cat','rec','recon','rank','pts','comp'], cols, 'c66', ['filt']);
 }
 
 /* 分析頁的紅利點數：每家銀行一列，點開看每期變化 */
