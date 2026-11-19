@@ -390,6 +390,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
    v3.13：帳單頁不再列「沒帳單而且推估是 0」的銀行
    v3.14：帳單卡片可以點開看那一期的消費明細；即將到期不再列 0 元帳單
+   v3.24：總覽列出全部本期待繳帳單，與帳單頁的待繳合計用同一套判斷。
    v3.23：銀行費用：帳單卡片直接標出這期的年費、利息、違約金、手續費（減免的抵掉；有年費提醒可以申請減免、
           有利息或違約金提醒上期可能沒繳清）；分析頁多「銀行費用」（選的期間）與「固定支出」
           （每月／每兩個月／每季固定扣一筆、金額差不多的：電信、訂閱、保險…，每月約多少、這期還沒扣的標出來）
@@ -411,7 +412,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.15：帳單標出期別；繳款紀錄改顯示銀行、可點開看那期明細；
           修好「結帳日一改，已繳的帳單又變回未繳」導致的重複繳款
    ================================================================== */
-var APP_VER = 'v3.23';
+var APP_VER = 'v3.24';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
@@ -1133,6 +1134,7 @@ function paidSumG(g){
 }
 /* 自動扣款、還沒記繳款、已經過了截止日：當作銀行已經扣走了 */
 function autoDone(g){ return !!(g.auto && !(g.paidSum > 0) && g.dd < 0 && g.amt > 0); }
+function billUnpaid(g){ return g.amt > 0 && !g.paid && !autoDone(g); }
 function calibCard(g){
   var best=null, bt=0, i;
   for(i=0;i<g.cards.length;i++){
@@ -1585,16 +1587,16 @@ function vOverview(){
     B.bank = sec('依銀行彙總<span class="ct">'+bk.length+' 家</span>', h + '</table></div>');
   }
 
-  /* 即將到期 */
-  var ups = upcoming(45);
+  /* 待繳帳單 */
+  var ups = upcoming();
   if(!ups.length){
-    h = '<div class="card mut">未來 45 天沒有到期的帳單。</div>';
+    h = '<div class="card mut">目前沒有待繳帳單。</div>';
   }else{
     h = '<div class="bgrid">';
-    for(i=0;i<ups.length && i<6;i++) h += billCard(ups[i], true);
+    for(i=0;i<ups.length;i++) h += billCard(ups[i], true);
     h += '</div>';
   }
-  B.up = sec('即將到期<span class="ct">同一家銀行合併成一張</span>', h);
+  B.up = sec('待繳帳單<span class="ct">'+ups.length+' 筆</span>', h);
 
   /* 本月分類 */
   var cat = monthByCat();
@@ -1662,18 +1664,9 @@ function monthByCat(){
   return arr;
 }
 function upcoming(days){
-  var gs=billGroups(), out=[], i;
-  for(i=0;i<gs.length;i++){
-    var g=gs[i];
-    if(g.dd > days) continue;
-    /* 0 元就是沒東西要繳，不必提醒 —— 帳單就是 0、或這期根本沒消費，都一樣。
-       （帳單頁仍然看得到「帳單金額 0」那種，用來確認帳單收到了） */
-    if(!g.amt) continue;
-    if(g.paid && g.dd < 0) continue;
-    if(autoDone(g)) continue;          /* 自動扣款、過了截止日：銀行已經扣了 */
-    out.push(g);
-  }
-  return out;
+  return billGroups().filter(function(g){
+    return billUnpaid(g) && (days === undefined || g.dd <= days);
+  });
 }
 function adjSoon(){
   var cs=activeCards(), out=[], t=today();
@@ -2005,7 +1998,7 @@ function billBodyHTML(){
     var unpaid=0, autoN=0, tot=0;
     for(i=0;i<list.length;i++){
       var g=list[i];
-      if(!g.paid && !autoDone(g)) unpaid += Math.max(0, g.amt);
+      if(billUnpaid(g)) unpaid += g.amt;
       /* 已繳的也要算 —— 以前只數未繳的，所以越標記已繳、自動扣款家數就越少 */
       if(g.auto) autoN++;
       tot += Math.max(0, g.amt);
