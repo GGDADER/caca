@@ -135,11 +135,17 @@ main{padding:14px}
 /* ---- 分類排行 ---- */
 .crank{display:flex;align-items:center;gap:9px;margin-bottom:9px}
 .crank .cg{width:22px;flex:none;text-align:center}
-.crank .cn{width:74px;flex:none;font-size:13px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crank .cn{width:104px;flex:none;font-size:13px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .crank .cb{flex:1;min-width:0}
 .crank .cb .gauge{margin:0}
 .crank .cp{width:38px;flex:none;text-align:right;font-size:12px;color:var(--dim)}
 .crank .cv{width:78px;flex:none;text-align:right;font-size:13px}
+@media (max-width:480px){
+  .crank{gap:6px}
+  .crank .cn{width:84px;white-space:normal}
+  .crank .cp{width:34px}
+  .crank .cv{width:71px}
+}
 button.crank{width:100%;padding:6px 0;margin:0;text-align:left;border-radius:7px}
 .an-hit{border-radius:7px;text-align:left}
 .hero button.big{display:block;padding:0;overflow-wrap:break-word;max-width:100%}
@@ -399,6 +405,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
    v3.13：帳單頁不再列「沒帳單而且推估是 0」的銀行
    v3.14：帳單卡片可以點開看那一期的消費明細；即將到期不再列 0 元帳單
+   v3.26：健身房、好市多、雲服務&AI 自動分類；補辨識醫院縮寫，車輛維護&升級沿用原分類代碼。
    v3.25：分析可展開分類、銀行、刷卡金額及費用明細；帳單可搜分類，也可只改一筆交易的分類。
    v3.24：總覽列出全部本期待繳帳單，與帳單頁的待繳合計用同一套判斷。
    v3.23：銀行費用：帳單卡片直接標出這期的年費、利息、違約金、手續費（減免的抵掉；有年費提醒可以申請減免、
@@ -422,13 +429,14 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.15：帳單標出期別；繳款紀錄改顯示銀行、可點開看那期明細；
           修好「結帳日一改，已繳的帳單又變回未繳」導致的重複繳款
    ================================================================== */
-var APP_VER = 'v3.25';
+var APP_VER = 'v3.26';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
   {k:'食', g:'🍜', n:'餐飲'}, {k:'超', g:'🛒', n:'超市'}, {k:'網', g:'📦', n:'網購'},
   {k:'行', g:'🚗', n:'交通'}, {k:'油', g:'⛽', n:'加油'}, {k:'電', g:'⚡', n:'電動車充電'},
-  {k:'升', g:'🛠', n:'車輛升級'},
+  {k:'升', g:'🛠', n:'車輛維護&升級'}, {k:'健', g:'🏋', n:'健身房'},
+  {k:'好', g:'🛒', n:'好市多'}, {k:'雲', g:'☁️', n:'雲服務&AI'},
   {k:'樂', g:'🎬', n:'娛樂'},
   {k:'旅', g:'✈️', n:'旅遊'}, {k:'醫', g:'🏥', n:'醫療'}, {k:'費', g:'🧾', n:'繳費'},
   {k:'保', g:'🛡', n:'保險'}, {k:'他', g:'▫️', n:'其他'}
@@ -438,15 +446,19 @@ var CATS = [
 var CAT_RULES = [
   ['食', /uber\s*eats|foodpanda|熊貓|外送/i],
   ['保', /保險|人壽|產險|產物|保費|保單|南山|安聯|友邦|保誠|三商美邦|\baia\b/i],
-  ['醫', /醫院|診所|醫療|醫學|牙醫|牙科|眼科|耳鼻|皮膚科|婦產|中醫|復健|藥局|藥房|藥師|健保|榮總|長庚|馬偕|慈濟|彰基|秀傳|澄清醫|童綜合|光田|杏一|大樹藥|丁丁藥|啄木鳥|動物醫|檢驗所|體檢|健檢/i],
+  ['醫', /醫院|診所|醫療|醫學|中山\s*醫|中國\s*醫|牙醫|牙科|眼科|耳鼻|皮膚科|婦產|中醫|復健|藥局|藥房|藥師|健保|榮總|長庚|馬偕|慈濟|彰基|秀傳|澄清醫|童綜合|光田|杏一|大樹藥|丁丁藥|啄木鳥|動物醫|檢驗所|體檢|健檢/i],
+  ['健', /健身工廠|健身房|健身中心|健身會館|健身俱樂部|\b(?:world\s*gym|anytime\s*fitness|fitness\s*factory|fitness\s*center|gold'?s\s*gym|planet\s*fitness)\b/i],
+  ['好', /好市多|\bcostco\b/i],
+  ['雲', /\bapple\s*\.\s*com\s*\/\s*bill\b|\b(?:icloud|dropbox|one\s*drive|pcloud|backblaze|box\.com|mega\.nz)\b|\bgoogle[\s*._-]*(?:google[\s*._-]*)?(?:one|drive|storage|cloud|workspace|gemini|ai[\s*._-]*(?:pro|ultra|plus))\b|\bmicrosoft[\s*._-]*(?:microsoft[\s*._-]*)?(?:365|copilot)\b|雲端\s*(?:儲存|硬碟)/i],
+  ['雲', /\b(?:openai|chatgpt|anthropic|claude\.ai|claude\s+(?:pro|max|sub)|perplexity|midjourney|elevenlabs|cursor\.ai|poe\.com|github\s*copilot|notion\s+ai|gemini\s+advanced)\b|(?:人工智慧|\bai)\s*訂閱/i],
   ['電', /supercharg|超充|超級充電|充電站|充電樁|充電槍|快充|evoasis|源點|evalue|華城電能|u-?power|裕電|俥電|icharging|起而行|noodoe|拓連|ionex|gogoro\s*network|電池交換|電動車|\bev\s*charg|tesla|特斯拉/i],
   ['油', /中油|台塑石化|台亞|福懋|全國加油|加油|油站|石油|\bcpc\b/i],
   ['行', /高鐵|thsr|台鐵|臺鐵|鐵路|捷運|metro|悠遊卡|easy\s*card|一卡通|ipass|uber|計程車|taxi|大車隊|55688|yoxi|停車|parking|嘟嘟房|俥亭|車旅|遠通|\betc\b|etag|國道|客運|公車|統聯|國光|和欣|wemo|irent|和雲|租車|youbike|微笑單車|汽車|機車|輪胎|保養廠/i],
   ['旅', /航空|airline|airways|air\s*asia|starlux|星宇|虎航|tigerair|樂桃|peach|酷航|scoot|捷星|jetstar|agoda|booking\.com|hotels\.com|expedia|trip\.com|攜程|klook|客路|kkday|airbnb|飯店|酒店|旅館|旅店|民宿|hotel|resort|hostel|旅行社|旅遊|雄獅|易遊|eztravel|可樂旅|東南旅|燦星|免稅|duty\s*free|昇恆昌|采盟|機場|airport/i],
   ['網', /蝦皮|shopee|momo(?!\s*paradise)|富邦媒|pchome|網家|露天|ruten|yahoo|奇摩|博客來|books\.com|amazon|淘寶|taobao|天貓|tmall|京東|酷澎|coupang|東森購物|生活市集|松果|gomaji|17life|樂天市場|aliexpress|速買配|iherb|temu|shein|paypal|網購|購物網|線上購物/i],
-  ['樂', /影城|影院|電影|威秀|vieshow|秀泰|國賓|喜樂時代|netflix|spotify|kkbox|youtube|disney|apple\.com\/bill|itunes|google\s*\*?\s*play|steam|playstation|nintendo|任天堂|xbox|kktv|friday\s*影音|line\s*tv|myvideo|catchplay|\bhbo|愛奇藝|iqiyi|錢櫃|好樂迪|\bktv|健身|\bgym\b|運動中心|kktix|tixcraft|拓元|年代售票|寬宏|售票|遊樂|樂園|六福村|劍湖山|麗寶|動物園|博物館|美術館|展覽|書店|誠品|金石堂|遊戲/i],
+  ['樂', /影城|影院|電影|威秀|vieshow|秀泰|國賓|喜樂時代|netflix|spotify|kkbox|youtube|disney|itunes|google\s*\*?\s*play|steam|playstation|nintendo|任天堂|xbox|kktv|friday\s*影音|line\s*tv|myvideo|catchplay|\bhbo|愛奇藝|iqiyi|錢櫃|好樂迪|\bktv|健身|\bgym\b|運動中心|kktix|tixcraft|拓元|年代售票|寬宏|售票|遊樂|樂園|六福村|劍湖山|麗寶|動物園|博物館|美術館|展覽|書店|誠品|金石堂|遊戲/i],
   ['費', /電信|中華電|台灣大哥大|台哥大|遠傳|亞太電|台灣之星|\bcht\b|台灣電力|台電|電費|自來水|水費|瓦斯|天然氣|欣中|燃氣|管理費|學費|稅|規費|罰鍰|監理|有線電視|凱擘|中嘉|台灣寬頻|電話費|手機費|代繳|年費|手續費|服務費|利息|違約金/i],
-  ['超', /全聯|px\s*mart|家樂福|carrefour|好市多|costco|美廉社|楓康|愛買|頂好|wellcome|聖德科斯|棉花田|超市|量販|大潤發|rt-?mart|統一超商|7-?eleven|7-11|全家(?!福)|family\s*mart|萊爾富|hi-?life|ok超商|ok\s*mart|便利商店|屈臣氏|watsons|康是美|cosmed|寶雅|poya|大創|daiso|無印良品|muji|宜得利|nitori|ikea|特力屋|小北百貨|生活工場|日藥本舖|松本清/i],
+  ['超', /全聯|px\s*mart|家樂福|carrefour|美廉社|楓康|愛買|頂好|wellcome|聖德科斯|棉花田|超市|量販|大潤發|rt-?mart|統一超商|7-?eleven|7-11|全家(?!福)|family\s*mart|萊爾富|hi-?life|ok超商|ok\s*mart|便利商店|屈臣氏|watsons|康是美|cosmed|寶雅|poya|大創|daiso|無印良品|muji|宜得利|nitori|ikea|特力屋|小北百貨|生活工場|日藥本舖|松本清/i],
   ['食', /momo\s*paradise|麥當勞|mcdonald|肯德基|\bkfc\b|摩斯|mos\s*burger|漢堡|burger|星巴克|starbucks|路易莎|louisa|85度c|cama|丹堤|咖啡|coffee|cafe|café|50嵐|清心|可不可|迷客夏|茶湯會|春水堂|大茗|麻古|鶴茶樓|coco都可|珍煮丹|龜記|得正|五桐號|comebuy|日出茶太|鮮茶道|茶|飲料|飲品|手搖|餐|食|麵|飯|鍋|燒肉|燒烤|烤肉|牛排|steak|壽司|sushi|拉麵|ramen|丼|便當|早午餐|早點|小吃|美食|烘焙|bakery|蛋糕|甜點|冰品|豆花|pizza|披薩|必勝客|達美樂|subway|鼎泰豐|爭鮮|王品|饗|瓦城|八方雲集|吉野家|大戶屋|薩莉亞|一蘭|一風堂|屋馬|海底撈|築間|石二鍋|胖老爹|頂呱呱|繼光|鬍鬚張|滷味|鹹酥雞|雞排|居酒屋|酒館|bistro|restaurant|kitchen|diner|grill/i]
 ];
 var TAB_NAME = {ov:'總覽', cd:'卡片', add:'記帳', bl:'帳單', an:'分析', st:'設定'};
@@ -737,6 +749,8 @@ function catInfo(m, kind){
   for(i=0;i<ur.length;i++){ if(u.indexOf(ur[i].u)>=0){ res=[ur[i].cat,'u',ur[i].kw]; break; } }
   if(!res[1]){
     for(i=0;i<CAT_RULES.length;i++){ if(CAT_RULES[i][1].test(u)){ res=[CAT_RULES[i][0],'a','']; break; } }
+    /* 訂閱商店的附加銀行費用與服務本身分開。 */
+    if(res[0]==='雲' && feeOf({m:key})) res=['費','a',''];
   }
   _catMemo[key]=res;
   return res;
@@ -820,15 +834,20 @@ function flushRules(manual){
         + (j.err==='不認得的 action' ? 'Code.gs 要更新並部署新版本' : (j.err||'?')));
       return;
     }
-    var sent={}, k, loc=S.catRules||[];
+    var sent=Object.create(null), applied=Object.create(null), all=j.rules||[], pending=false, k, rule, loc=S.catRules||[];
     for(k=0;k<ops.length;k++) sent[ops[k].kw]=ops[k].cat;
+    for(k=0;k<all.length;k++) applied[all[k].kw]=all[k].cat;
     for(k=0;k<loc.length;k++){
-      if(loc[k].p && sent.hasOwnProperty(loc[k].kw) && sent[loc[k].kw]===(loc[k].cat||'')) loc[k].p=0;
+      rule=loc[k];
+      if(!rule.p || sent[rule.kw] !== (rule.cat||'')) continue;
+      if((applied[rule.kw]||'') === (rule.cat||'')) rule.p=0;
+      else pending=true;
     }
-    mergeRules(j.rules||[]);
+    mergeRules(all);
     save();
     refreshCats();
-    if(manual) toast('分類規則已同步');
+    if(pending) toast('部分分類規則已留在這台。更新 Code.gs 後可再同步。');
+    else if(manual) toast('分類規則已同步');
   }, '同步規則');
 }
 /* 分類變了之後只重畫看得到分類的地方，不打斷正在輸入的欄位 */
