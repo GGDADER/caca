@@ -140,6 +140,15 @@ main{padding:14px}
 .crank .cb .gauge{margin:0}
 .crank .cp{width:38px;flex:none;text-align:right;font-size:12px;color:var(--dim)}
 .crank .cv{width:78px;flex:none;text-align:right;font-size:13px}
+button.crank{width:100%;padding:6px 0;margin:0;text-align:left;border-radius:7px}
+.an-hit{border-radius:7px;text-align:left}
+.hero button.big{display:block;padding:0;overflow-wrap:break-word;max-width:100%}
+.an-hit:hover,.an-bankrow:hover{background:rgba(255,255,255,.04)}
+.an-bankrow{cursor:pointer}
+.an-bankrow button{width:100%;padding:0;text-align:left;font-size:inherit}
+.an-breakdown>button{flex:1;min-width:0;background:var(--slab2);border-radius:10px;padding:9px 10px}
+.an-breakdown .k,.an-breakdown .v{display:block;overflow-wrap:break-word}
+@media (max-width:480px){.an-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* ---- 表單 ---- */
 label{display:block;font-size:12px;color:var(--dim);margin:12px 0 5px}
@@ -390,6 +399,7 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.12：卡片頁依銀行分組時，各家底下直接看得到紅利點數
    v3.13：帳單頁不再列「沒帳單而且推估是 0」的銀行
    v3.14：帳單卡片可以點開看那一期的消費明細；即將到期不再列 0 元帳單
+   v3.25：分析可展開分類、銀行、刷卡金額及費用明細；帳單可搜分類，也可只改一筆交易的分類。
    v3.24：總覽列出全部本期待繳帳單，與帳單頁的待繳合計用同一套判斷。
    v3.23：銀行費用：帳單卡片直接標出這期的年費、利息、違約金、手續費（減免的抵掉；有年費提醒可以申請減免、
           有利息或違約金提醒上期可能沒繳清）；分析頁多「銀行費用」（選的期間）與「固定支出」
@@ -412,18 +422,19 @@ body.lock{position:fixed;left:0;right:0;width:100%;overflow:hidden}
    v3.15：帳單標出期別；繳款紀錄改顯示銀行、可點開看那期明細；
           修好「結帳日一改，已繳的帳單又變回未繳」導致的重複繳款
    ================================================================== */
-var APP_VER = 'v3.24';
+var APP_VER = 'v3.25';
 var KEY = 'CARDDESK_V1';
 
 var CATS = [
   {k:'食', g:'🍜', n:'餐飲'}, {k:'超', g:'🛒', n:'超市'}, {k:'網', g:'📦', n:'網購'},
   {k:'行', g:'🚗', n:'交通'}, {k:'油', g:'⛽', n:'加油'}, {k:'電', g:'⚡', n:'電動車充電'},
+  {k:'升', g:'🛠', n:'車輛升級'},
   {k:'樂', g:'🎬', n:'娛樂'},
   {k:'旅', g:'✈️', n:'旅遊'}, {k:'醫', g:'🏥', n:'醫療'}, {k:'費', g:'🧾', n:'繳費'},
   {k:'保', g:'🛡', n:'保險'}, {k:'他', g:'▫️', n:'其他'}
 ];
 /* 帳單明細的自動分類：依商店名稱比對，由上往下先中先贏。
-   你在記帳頁改過的分類會存成「自訂規則」，比這張表優先。 */
+   單筆指定的分類優先，其次用自訂規則，最後才查這張表。 */
 var CAT_RULES = [
   ['食', /uber\s*eats|foodpanda|熊貓|外送/i],
   ['保', /保險|人壽|產險|產物|保費|保單|南山|安聯|友邦|保誠|三商美邦|\baia\b/i],
@@ -682,6 +693,8 @@ function byId(arr,id){ for(var i=0;i<arr.length;i++){ if(arr[i].id===id) return 
 function catOf(k){ for(var i=0;i<CATS.length;i++){ if(CATS[i].k===k) return CATS[i]; } return CATS[CATS.length-1]; }
 /* ============ 消費分類 ============ */
 var NO_SHOP = /帳單未列商店/;
+/* 匯入的「他」代表交由自動分類；指定為其他時要能區分，仍沿用既有的分類欄位同步。 */
+var CAT_OTHER_FIXED = '他!';
 var _catMemo = {}, _merMemo = {}, _ruleSorted = null;
 /* 全形英數轉半形，比對時才不會因為全形字漏掉 */
 function halfw(s){
@@ -731,11 +744,13 @@ function catInfo(m, kind){
 /* 這筆的分類是不是自動判斷的（帳單匯入等自動來源、且沒有指定明確分類） */
 function isAutoCat(t){
   var c=t.c||'';
+  if(c===CAT_OTHER_FIXED) return false;
   if(!t.src && c && catValid(c)) return false;          /* 手動記的帳：尊重當時選的分類 */
   if(c && c!=='他' && catValid(c)) return false;        /* 來源已給明確分類 */
   return true;
 }
 function txCat(t){
+  if(t.c===CAT_OTHER_FIXED) return '他';
   return isAutoCat(t) ? catInfo(t.m, t.kind)[0] : t.c;
 }
 /* 從商店名取出「品牌」部分，當作規則關鍵字的預設值 */
@@ -1918,7 +1933,7 @@ function srcTag(t){
 }
 function txRow(t){
   var c=byId(S.cards,t.cid), co=catOf(txCat(t)), a=Number(t.a)||0;
-  return '<div class="tx" onclick="txSheet(\''+t.id+'\')">'
+  return '<div class="tx" data-txn="'+esc(t.id)+'" onclick="txSheet(this.getAttribute(\'data-txn\'))">'
     + '<div class="cat" title="'+co.n+'">'+co.g+'</div>'
     + '<div class="tm"><div class="m">'+esc(t.m||co.n)+'</div>'
     + '<div class="d">'+esc(t.d)+' · '+esc(cardTitle(c))+(t.inst>0?' · 分'+t.inst+'期':'')+srcTag(t)+'</div></div>'
@@ -1963,7 +1978,7 @@ function vBills(){
     for(i=12;i<ms.length;i++) h += '<option value="'+ms[i]+'"'+(BILLV.per===ms[i]?' selected':'')+'>'+ms[i].replace('-','/')+'</option>';
     h += '</select>';
   }
-  h += '<input id="b_q" class="fq" style="margin-top:10px" placeholder="搜尋商店、卡片或銀行（所有帳單期）" value="'
+  h += '<input id="b_q" class="fq" style="margin-top:10px" placeholder="搜尋商店、分類、卡片或銀行" value="'
     + esc(BILLV.q||'')+'" oninput="setBillQ(this.value)" autocomplete="off">'
     + '<div class="mut2">'+(BILLV.per ? cycLabel(BILLV.per)+' 期＝在這個月結帳的那一期。點銀行展開明細。'
                                       : '本期＝各家最近一期帳單。點銀行展開明細；選月份看以前的帳單。')+'</div></section>';
@@ -2027,13 +2042,13 @@ function billBodyHTML(){
   B.pays = paysHTML(per);
   return lay(B, ['hero','list','pays'], [['list'],['pays']], 'c84', ['hero']);
 }
-/* 跨所有帳單期找消費：商店、備註、卡名、末四碼、銀行都比對，空白分開的每個字都要符合 */
+/* 跨所有帳單期找消費；空白分開的每個字都要符合。 */
 function billSearchHTML(){
-  var q=String(BILLV.q||'').toUpperCase().replace(/^\s+|\s+$/g,''), parts=q.split(/\s+/), out=[], CM={}, i, j, sum=0;
+  var q=normMer(BILLV.q), parts=q.split(/\s+/), out=[], CM={}, i, j, sum=0;
   for(i=0;i<S.cards.length;i++) CM[S.cards[i].id]=S.cards[i];
   for(i=0;i<S.txns.length;i++){
     var t=S.txns[i], c=CM[t.cid], ok=true;
-    var hay=(String(t.m||'')+' '+String(t.n||'')+' '+(c ? cardHay(c) : '')).toUpperCase();
+    var hay=normMer(String(t.m||'')+' '+String(t.n||'')+' '+(c ? cardHay(c) : '')+' '+catOf(txCat(t)).n);
     for(j=0;j<parts.length;j++) if(hay.indexOf(parts[j])<0){ ok=false; break; }
     if(ok){ out.push(t); sum += Number(t.a)||0; }
   }
@@ -2272,16 +2287,25 @@ function txKey(t){
   if(ANV.byCyc) return String(t.cyc||'').slice(0,7);
   return String(t.d||'').slice(0,7);
 }
+function analysisRange(){
+  var y=ANV.y, m=ANV.m;
+  return {from:ym(y,m<0 ? 0 : m), to:ym(y,m<0 ? 11 : m)};
+}
+function analysisKind(t){
+  return (Number(t.a)||0)>=0 ? 'spend' : (t.kind==='回饋' ? 'rebate' : 'refund');
+}
+function analysisBank(t){
+  var c=byId(S.cards,t.cid);
+  return c ? (normCode(c.code) || ('?'+(c.name||'').slice(0,3))) : '?';
+}
 function txAgg(ym1, ym2){
-  var out={total:0, n:0, spend:0, refund:0, rebate:0, cat:{}, card:{}}, i;
+  var out={total:0, n:0, spend:0, refund:0, rebate:0, cat:{}, card:{}, rows:[]}, i;
   for(i=0;i<S.txns.length;i++){
     var t=S.txns[i], k=txKey(t);
     if(!k || k<ym1 || k>ym2) continue;
     var a=Number(t.a)||0, ck=txCat(t);
-    out.total+=a; out.n++;
-    if(a>=0) out.spend+=a;
-    else if(t.kind==='回饋') out.rebate+=a;
-    else out.refund+=a;
+    out.total+=a; out.n++; out.rows.push(t);
+    out[analysisKind(t)]+=a;
     out.cat[ck]=(out.cat[ck]||0)+a;
     out.card[t.cid]=(out.card[t.cid]||0)+a;
   }
@@ -2385,6 +2409,58 @@ function feeHint(F){
   if(by['利息']){ for(n in by['利息'].names){ if(by['利息'].names.hasOwnProperty(n) && (n==='循環利息' || n==='利息') && by['利息'].names[n]>0) late=true; } }
   if(late) h.push('有循環利息或違約金：上一期可能沒繳清或晚繳了');
   return h.length ? '<div class="mut2" style="margin-top:2px">'+h.join('；')+'</div>' : '';
+}
+/* 手續費依細目分開，讓國外交易手續費可以獨立查詢。 */
+function analysisFeeKey(f){ return f.k==='手續費' ? f.n : f.k; }
+function analysisFeeGroups(lines){
+  var groups={}, out=[], i, f, key, group;
+  for(i=0;i<lines.length;i++){
+    f=lines[i]; key=analysisFeeKey(f); group=groups[key];
+    if(!group){ group=groups[key]={k:f.k, key:key, net:0, gross:0, names:{}}; out.push(group); }
+    group.net+=f.a;
+    if(f.a>0) group.gross+=f.a;
+    group.names[f.n]=true;
+  }
+  out.sort(function(a,b){ return FEE_ORDER.indexOf(a.k)-FEE_ORDER.indexOf(b.k) || a.key.localeCompare(b.key); });
+  return out;
+}
+function toggleAnalysisFees(){
+  var extra=$('anFeeExtra'), btn=$('anFeeToggle');
+  if(!extra || !btn) return;
+  extra.hidden=!extra.hidden;
+  btn.setAttribute('aria-expanded', extra.hidden ? 'false' : 'true');
+  btn.textContent=extra.hidden ? '展開全部 '+btn.getAttribute('data-count')+' 筆費用明細' : '收合至最近 40 筆';
+}
+var AN_METRICS={spend:'消費', rebate:'回饋/折抵', refund:'退款', net:'淨額'};
+function analysisMetric(key, amount){
+  var color=key==='net' ? 'var(--brass)' : (key==='spend' ? 'var(--txt)' : 'var(--mint)');
+  return '<button type="button" class="an-hit" onclick="analysisDetail(\'metric\',\''+key+'\')">'
+    + '<span class="k">'+AN_METRICS[key]+'</span><span class="v num" style="color:'+color+'">'+money(amount)+'</span></button>';
+}
+function analysisDetail(type, key){
+  var p=analysisRange(), rows=txAgg(p.from,p.to).rows, title='全部消費', i, total=0, h;
+  if(type==='cat'){
+    title=catOf(key).n;
+    rows=rows.filter(function(t){ return txCat(t)===key; });
+  }else if(type==='bank'){
+    title=bankLabel(key);
+    rows=rows.filter(function(t){ return analysisBank(t)===key; });
+  }else if(type==='fee'){
+    title=key;
+    rows=rows.filter(function(t){ var f=feeOf(t); return f && analysisFeeKey(f)===key; });
+  }else if(type==='metric'){
+    title=AN_METRICS[key];
+    if(key!=='net') rows=rows.filter(function(t){ return analysisKind(t)===key; });
+  }
+  rows.sort(function(a,b){ return String(b.d||'').localeCompare(String(a.d||'')); });
+  for(i=0;i<rows.length;i++) total+=Number(rows[i].a)||0;
+  h='<h3>'+esc(title)+'明細</h3><div class="mut2">'+(ANV.byCyc?'依帳單期':'依消費日')+' · '
+    + (ANV.m<0 ? ANV.y+' 年' : p.from.replace('-','/'))+'</div>'
+    + '<div class="ln" style="margin:8px 0"><span>'+rows.length+' 筆</span><b class="num">'+money(total)+'</b></div>'
+    + '<div class="card txl" id="anDetails">';
+  if(!rows.length) h+='<div class="mut2">此期間沒有明細。</div>';
+  for(i=0;i<rows.length;i++) h+=txRow(rows[i]);
+  openSheet(h+'</div>');
 }
 
 /* ============ 固定支出：每月（或每兩個月、每季）固定扣的（v3.23） ============
@@ -2509,8 +2585,7 @@ function vAnalysis(){
   var y=ANV.y, m=ANV.m;
 
   /* 年度區間 vs 單月區間 */
-  var from = (m<0) ? ym(y,0)  : ym(y,m);
-  var to   = (m<0) ? ym(y,11) : ym(y,m);
+  var period=analysisRange(), from=period.from, to=period.to;
   var A = txAgg(from, to);
 
   /* 年份切換：沒有帳單期的紀錄（手動記帳）不產生空白的年份按鈕 */
@@ -2554,18 +2629,18 @@ function vAnalysis(){
     for(i=0;i<gsn.length;i++) if(gsn[i].lc > t) notYetN++;
   }
   B.hero = sec('', '<div class="hero"><div class="lab">'+heroLab+'</div>'
-    +  '<div class="big num" style="color:var(--brass)"><small>NT$</small>'+money(A.total)+'</div>'
+    +  '<button class="big num an-hit" style="color:var(--brass)" type="button" aria-label="查看全部消費明細" onclick="analysisDetail(\'all\')"><small>NT$</small>'+money(A.total)+'</button>'
     +  '<div class="legend" style="margin-top:8px"><span>'+A.n+' 筆</span>'
     +  '<span style="color:'+(diff>0?'var(--rose)':'var(--mint)')+'">'
     +  (lastA.total && !curCyc ? (diff>=0?'▲ ':'▼ ')+money(Math.abs(diff))+'（'+(m<0?'較去年':'較上月')+'）' : '—')+'</span>'
     +  '<span>平均 '+money(A.n?A.total/A.n:0)+' /筆</span></div>'
     +  (emptyNow ? '<div class="mut2" style="margin-top:8px">這個月結帳的帳單還沒出來，帳單匯入後就會有數字；看上個月點「'+(m||12)+'月」。</div>'
         : (curCyc && notYetN ? '<div class="mut2" style="margin-top:8px">還有 '+notYetN+' 家這個月還沒結帳，數字會再增加，所以先不跟上月比。</div>' : ''))
-    +  ((A.refund || A.rebate) ? '<div class="stat3" style="margin-top:10px">'
-        + '<div><div class="k">消費</div><div class="v num">'+money(A.spend)+'</div></div>'
-        + (A.rebate ? '<div><div class="k">回饋/折抵</div><div class="v num" style="color:var(--mint)">'+money(A.rebate)+'</div></div>' : '')
-        + (A.refund ? '<div><div class="k">退款</div><div class="v num" style="color:var(--mint)">'+money(A.refund)+'</div></div>' : '')
-        + '<div><div class="k">淨額</div><div class="v num" style="color:var(--brass)">'+money(A.total)+'</div></div></div>' : '')
+    +  ((A.refund || A.rebate) ? '<div class="stat3 an-breakdown" style="margin-top:10px">'
+        + analysisMetric('spend', A.spend)
+        + (A.rebate ? analysisMetric('rebate', A.rebate) : '')
+        + (A.refund ? analysisMetric('refund', A.refund) : '')
+        + analysisMetric('net', A.total)+'</div>' : '')
     +  '</div>');
 
   /* 月趨勢 */
@@ -2585,29 +2660,27 @@ function vAnalysis(){
 
   /* 分類佔比 */
   var cr = rank(A.cat);
-  if(cr.length > 1){        /* 只有一類就不必顯示 */
+  if(cr.length){
     h = '<div class="card">';
     var other = 0;
     for(i=0;i<cr.length;i++){
       var co=catOf(cr[i].k), pc = A.total>0 ? cr[i].v/A.total*100 : 0;
       if(cr[i].k==='他') other = pc;
-      h += '<div class="crank"><span class="cg">'+co.g+'</span><span class="cn">'+co.n+'</span>'
+      h += '<button type="button" class="crank an-hit" data-key="'+esc(cr[i].k)+'" onclick="analysisDetail(\'cat\',this.getAttribute(\'data-key\'))">'
+        +  '<span class="cg">'+co.g+'</span><span class="cn">'+co.n+'</span>'
         +  '<span class="cb"><span class="gauge"><i style="width:'+Math.max(0,Math.min(100,pc)).toFixed(1)+'%;background:var(--brassd)"></i></span></span>'
         +  '<span class="cp num">'+pc.toFixed(0)+'%</span>'
-        +  '<span class="cv num">'+money(cr[i].v)+'</span></div>';
+        +  '<span class="cv num">'+money(cr[i].v)+'</span></button>';
     }
-    if(other >= 15) h += '<div class="mut2" style="margin-top:4px">「其他」佔 '+other.toFixed(0)+'%。到記帳頁點一筆改分類，會存成規則，同名商店以後都照這個分。</div>';
+    if(other >= 15) h += '<div class="mut2" style="margin-top:4px">「其他」佔 '+other.toFixed(0)+'%。點開明細可調整交易分類。</div>';
     B.cat = sec('分類佔比', h + '</div>');
   }
 
   /* 各銀行帳單對帳 */
   if(ANV.byCyc){
     var bsum={}, bcnt={}, i2;
-    for(i2=0;i2<S.txns.length;i2++){
-      var t2=S.txns[i2], k3=txKey(t2);
-      if(!k3 || k3<from || k3>to) continue;
-      var cd3=byId(S.cards,t2.cid);
-      var bc3=cd3 ? (normCode(cd3.code) || ('?'+(cd3.name||'').slice(0,3))) : '?';
+    for(i2=0;i2<A.rows.length;i2++){
+      var t2=A.rows[i2], bc3=analysisBank(t2);
       bsum[bc3]=(bsum[bc3]||0)+(Number(t2.a)||0);
       bcnt[bc3]=(bcnt[bc3]||0)+1;
     }
@@ -2617,7 +2690,8 @@ function vAnalysis(){
         + '<div class="card tcard"><table class="tbl">'
         + '<tr><th>銀行</th><th class="r">筆數</th><th class="r">明細加總</th></tr>';
       for(i2=0;i2<br.length;i2++){
-        h += '<tr><td>'+esc(bankLabel(br[i2].k))+'</td>'
+        h += '<tr class="an-bankrow" data-key="'+esc(br[i2].k)+'" onclick="analysisDetail(\'bank\',this.getAttribute(\'data-key\'))">'
+          +  '<td><button type="button">'+esc(bankLabel(br[i2].k))+'</button></td>'
           +  '<td class="num r" style="color:var(--dim)">'+(bcnt[br[i2].k]||0)+'</td>'
           +  '<td class="num r">'+money(br[i2].v)+'</td></tr>';
       }
@@ -2633,9 +2707,8 @@ function vAnalysis(){
     for(i=0;i<kr.length && i<12;i++){
       var cd=byId(S.cards,kr[i].k);
       var cn=0, j;
-      for(j=0;j<S.txns.length;j++){
-        var tt=S.txns[j], k2=txKey(tt);
-        if(tt.cid===kr[i].k && k2>=from && k2<=to) cn++;
+      for(j=0;j<A.rows.length;j++){
+        if(A.rows[j].cid===kr[i].k) cn++;
       }
       h += '<tr><td>'+esc(cardTitle(cd))+'</td>'
         +  '<td class="num r" style="color:var(--dim)">'+cn+'</td>'
@@ -2684,30 +2757,34 @@ function vAnalysis(){
   if(pb) B.pts = sec('紅利點數 / 里程', pb);
 
   /* 銀行費用（v3.23）：上面選的期間裡，年費、利息、違約金、手續費各多少（減免的抵掉） */
-  var fts=[];
-  for(i=0;i<S.txns.length;i++){ var kf=txKey(S.txns[i]); if(kf && kf>=from && kf<=to) fts.push(S.txns[i]); }
-  var FA=feeSum(fts);
+  var FA=feeSum(A.rows);
   if(FA.n){
     var fl=FA.lines.slice().sort(function(p,q){ var a1=String(p.t.d||''), b1=String(q.t.d||''); return a1<b1 ? 1 : (a1>b1 ? -1 : 0); });
+    var feeGroups=analysisFeeGroups(fl);
     h = '<div class="card">'
       + '<div class="ln" style="margin-bottom:6px"><span>合計（減免的已抵掉）</span><span class="num" style="font-weight:700;color:'
       + (FA.net>0?'var(--amber)':'var(--mint)')+'">'+money(FA.net)+'</span></div>'
       + '<div class="chips" style="margin-bottom:6px">';
-    for(i=0;i<FEE_ORDER.length;i++){
-      var fb=FA.by[FEE_ORDER[i]]; if(!fb) continue;
+    for(i=0;i<feeGroups.length;i++){
+      var fb=feeGroups[i];
       var fv='<b class="num" style="color:var(--brass)">';
-      h += '<span class="chip">'+(fb.net>0 ? esc(feeName(fb))+' '+fv+money(fb.net)+'</b>'
+      h += '<button type="button" class="chip" data-key="'+esc(fb.key)+'" onclick="analysisDetail(\'fee\',this.getAttribute(\'data-key\'))">'
+          + (fb.net>0 ? esc(feeName(fb))+' '+fv+money(fb.net)+'</b>'
           : (fb.gross>0 ? esc(feeName(fb))+' '+fv+money(fb.gross)+'</b> 已減免'
-          : esc(feeName(fb))+'退回 '+fv+money(-fb.net)+'</b>'))+'</span>';
+          : esc(feeName(fb))+'退回 '+fv+money(-fb.net)+'</b>'))+'</button>';
     }
-    h += '</div><table class="tbl"><tr><th>日期</th><th>項目</th><th class="r">金額</th></tr>';
-    for(i=0;i<fl.length && i<40;i++){
+    h += '</div>';
+    if(fl.length>40) h += '<button type="button" class="btn ghost sm" id="anFeeToggle" aria-expanded="false" aria-controls="anFeeExtra" data-count="'
+      + fl.length+'" onclick="toggleAnalysisFees()">展開全部 '+fl.length+' 筆費用明細</button>';
+    h += '<table class="tbl" id="anFeeTable"><thead><tr><th>日期</th><th>項目</th><th class="r">金額</th></tr></thead><tbody>';
+    for(i=0;i<fl.length;i++){
+      if(i===40) h += '</tbody><tbody id="anFeeExtra" hidden>';
       var ft=fl[i].t;
       h += '<tr><td class="num mut2">'+esc(String(ft.d||'').slice(5).replace('-','/'))+'</td>'
         +  '<td style="word-break:break-all">'+esc(ft.m)+'<div class="mut2">'+esc(cardTitle(byId(S.cards, ft.cid)))+'</div></td>'
         +  '<td class="num r" style="color:'+(fl[i].a<0?'var(--mint)':'var(--txt)')+'">'+money(fl[i].a)+'</td></tr>';
     }
-    h += '</table>'+(fl.length>40 ? '<div class="mut2">只列最近 40 筆</div>' : '')
+    h += '</tbody></table>'
       +  '<div class="mut2" style="margin-top:8px">從帳單明細的文字認出來的。帳單把利息、年費印在明細表外面的，這裡看不到（帳單卡片會標「差」）。</div></div>';
     B.fee = sec('銀行費用<span class="ct">年費、利息、違約金、手續費</span>', h);
   }
@@ -3299,31 +3376,34 @@ function txSheet(id){
     + '<div class="num" style="font-size:38px;font-weight:800;margin:14px 0;color:var(--brass)">'+fmt(t.a)+'</div>'
     + (t.n?'<div class="mut" style="margin-bottom:10px">'+esc(t.n)+'</div>':'')
     + '<div class="eyebrow">分類</div>';
-  if(!auto){
+  if(!auto && !t.src){
     /* 手動記的帳：直接改這一筆 */
     h += '<div class="chips">'+catChips(k, 'xManual')+'</div>'
       +  '<input type="hidden" id="x_id" value="'+esc(id)+'">'
       +  '<div class="mut2" style="margin-top:8px">手動記的帳，點一下就改。</div>';
   }else{
     var inf=catInfo(t.m, t.kind);
-    var why = inf[1]==='u' ? '依你的規則「'+esc(inf[2])+'」'
-            : (inf[1]==='a' ? '依商店名稱自動判斷' : '沒有對應的規則，歸在其他');
+    var why = !auto ? '這筆已指定分類' : (inf[1]==='u' ? '依你的規則「'+esc(inf[2])+'」'
+            : (inf[1]==='a' ? '依商店名稱自動判斷' : '沒有對應的規則，歸在其他'));
     h += '<div class="chips" id="x_cats">'+catChips(k, 'xPick')+'</div>'
-      +  '<div class="mut2" style="margin-top:8px">目前是 '+co.g+' '+co.n+'：'+why+'</div>';
-    if(t.kind==='回饋'){
-      h += '<div class="mut2" style="margin-top:6px">銀行給的回饋一律歸在其他，不算進任何消費分類。</div>';
+      +  '<div class="mut2" style="margin-top:8px">目前是 '+co.g+' '+co.n+'：'+why+'</div>'
+      +  '<input type="hidden" id="x_id" value="'+esc(id)+'"><input type="hidden" id="x_cat" value="'+esc(k)+'">'
+      +  '<button class="btn sm" onclick="saveTxnCatX(false)">只改這一筆</button>';
+    if(!auto){
+      h += '<button class="btn sm ghost" onclick="saveTxnCatX(true)">恢復自動分類</button>';
+    }else if(t.kind==='回饋'){
+      h += '<div class="mut2" style="margin-top:6px">銀行回饋預設歸在其他。</div>';
     }else if(isNoShop(t.m)){
       h += '<div class="mut2" style="margin-top:6px">這家銀行的帳單沒有商店名，無法建立分類規則。</div>';
     }else{
-      h += '<input type="hidden" id="x_id" value="'+esc(id)+'"><input type="hidden" id="x_cat" value="'+esc(k)+'">'
-        +  '<label for="x_kw">套用到商店名稱包含</label>'
+      h += '<label for="x_kw">套用到商店名稱包含</label>'
         +  '<input id="x_kw" value="'+esc(baseMerchant(t.m))+'" oninput="xCount()">'
         +  '<div class="mut2" id="x_cnt" style="margin-top:5px">'+xCountText(baseMerchant(t.m), t.m)+'</div>'
-        +  '<button class="btn" onclick="saveRuleX()">儲存分類規則</button>';
+        +  '<button class="btn sm ghost" onclick="saveRuleX()">儲存商店分類規則</button>';
     }
   }
   h += '<div class="brow" style="margin-top:14px">'
-    +  '<button class="btn sm danger" onclick="delTxn(\''+id+'\')">刪除這筆</button>'
+    +  '<button class="btn sm danger" onclick="delTxn($(\'x_id\').value)">刪除這筆</button>'
     +  '<button class="btn sm ghost" onclick="closeSheet()">關閉</button></div>';
   openSheet(h);
 }
@@ -3345,6 +3425,13 @@ function xManual(k, el){
   t.c=k; markChip(el); save();
   refreshCats();
   toast('已改成 '+catOf(k).n);
+}
+function saveTxnCatX(reset){
+  var t=byId(S.txns, $('x_id').value), k=$('x_cat').value;
+  if(!t || !catValid(k)) return;
+  t.c=reset ? '他' : (k==='他' ? CAT_OTHER_FIXED : k);
+  save(); refreshCats(); txSheet(t.id);
+  toast(reset ? '已恢復自動分類' : '這筆已改成 '+catOf(k).n);
 }
 function saveRuleX(){
   var t=byId(S.txns, $('x_id').value); if(!t) return;
